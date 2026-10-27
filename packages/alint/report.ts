@@ -3,9 +3,21 @@
  *
  * - an "ALint" check run on the head commit, red when any finding is at
  *   `error` level, with the findings attached as line annotations;
- * - one summary comment on the open pull request for the branch, rewritten in
- *   place on every push (created only once there is something to report);
+ * - one pull request review per PR: the summary body is rewritten in place on
+ *   every push, plus a comment per finding on its own line, so it can be
+ *   replied to and resolved where it was raised — files with more findings
+ *   than AGGREGATE_THRESHOLD are commented once instead, to keep a run's
+ *   request count bounded (created only once there is something to report);
  * - the same table in the job's step summary.
+ *
+ * The review is submitted as `COMMENT`: it informs, it does not block. The
+ * ALint check is what turns red on errors.
+ *
+ * Every review comment costs a request, and GITHUB_TOKEN's budget is 1000
+ * requests/hour shared by the whole repository, so the shape follows the real
+ * numbers: a run finds a handful of findings spread over single lines (recent
+ * PRs: 0 errors, <=4 warnings, one per file), which is cheap to comment per
+ * line; a file that piles up findings is commented once instead.
  *
  * Calibration fixtures are dropped: bad fixtures fire by design and are
  * checked by the fixture suite instead.
@@ -56,7 +68,23 @@ export interface Finding {
   suggestion?: string;
 }
 
-export const COMMENT_MARKER = '<!-- alint-summary -->';
+/** Marks the review summarizing the run, so later pushes update it in place. */
+export const REVIEW_MARKER = '<!-- alint-summary -->';
+
+/**
+ * Marks one inline comment and carries the key the next run looks it up by:
+ * `file:line` for a per-line comment, `file` for a file aggregated because it
+ * has too many findings.
+ */
+export const findingMarker = (key: string) => `<!-- alint-finding:${key} -->`;
+const markerKey = (body?: string | null) => body?.match(/<!-- alint-finding:(.+?) -->/)?.[1];
+
+/** Inline comments are capped like the annotations: 50 findings at most. */
+const INLINE_LIMIT = 50;
+
+/** A file with more findings than this gets one aggregated comment. */
+export const AGGREGATE_THRESHOLD = 5;
+
 /**
  * Calibration fixtures fire by design. Rules live in more than one place —
  * repo-wide rules in `packages/alint`, package-level rules next to their
@@ -108,14 +136,16 @@ export const toTitle = (findings: Finding[]) => {
 };
 
 const cell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
+/** A list item is not a table cell: only newlines need collapsing there. */
+const oneLine = (value: string) => value.replaceAll('\n', ' ');
 
-/** Markdown body shared by the PR comment and the step summary. */
+/** Markdown body shared by the review and the step summary. */
 export const toMarkdown = (
   findings: Finding[],
   { repo, sha, runUrl, usage }: { repo: string; runUrl?: string; sha: string; usage?: string },
 ): string => {
   const icon = findings.some((f) => f.severity === 'error') ? '❌' : findings.length ? '⚠️' : '✅';
-  const lines = [`${COMMENT_MARKER}`, `### ${icon} ALint · ${toTitle(findings)}`, ''];
+  const lines = [`${REVIEW_MARKER}`, `### ${icon} ALint · ${toTitle(findings)}`, ''];
   if (findings.length === 0) {
     lines.push(`Checked the changed lines at \`${sha.slice(0, 7)}\`.`);
   } else {
@@ -143,7 +173,7 @@ export const toMarkdown = (
 
 /** Check-run annotations; the API accepts at most 50 per request. */
 export const toAnnotations = (findings: Finding[]) =>
-  findings.slice(0, 50).map((finding) => ({
+  findings.slice(0, INLINE_LIMIT).map((finding) => ({
     annotation_level: finding.severity === 'error' ? 'failure' : 'warning',
     end_line: finding.line,
     message: finding.suggestion ? `${finding.message}\n\n${finding.suggestion}` : finding.message,
@@ -151,6 +181,73 @@ export const toAnnotations = (findings: Finding[]) =>
     start_line: finding.line,
     title: finding.rule,
   }));
+
+export interface FindingComment {
+  body: string;
+  key: string;
+  line: number;
+  path: string;
+  side: 'RIGHT';
+}
+
+const severityIcon = (finding: Finding) => (finding.severity === 'error' ? '❌' : '⚠️');
+
+const toFindingBody = (finding: Finding) =>
+  [
+    findingMarker(`${finding.file}:${finding.line}`),
+    `**\`${finding.rule}\`** · ${finding.severity}`,
+    '',
+    oneLine(finding.message),
+    ...(finding.suggestion ? ['', `💡 ${oneLine(finding.suggestion)}`] : []),
+  ].join('\n');
+
+const toAggregatedBody = (file: string, findings: Finding[]) =>
+  [
+    findingMarker(file),
+    `**ALint · ${count(findings.length, 'finding')} in this file**`,
+    '',
+    ...findings.map((finding) => {
+      const head = `- ${severityIcon(finding)} \`${finding.rule}\` · L${finding.line} — ${oneLine(finding.message)}`;
+      return finding.suggestion ? `${head}\n  <sub>💡 ${oneLine(finding.suggestion)}</sub>` : head;
+    }),
+  ].join('\n');
+
+/**
+ * One comment per finding, on its own line, so the review reads like an
+ * ESLint run. A file whose findings exceed AGGREGATE_THRESHOLD is commented
+ * once instead: the point of the threshold is to keep the request count of a
+ * runaway run bounded, not to hide lines that are cheap to annotate.
+ */
+export const toFindingComments = (findings: Finding[]): FindingComment[] => {
+  const groups = new Map<string, Finding[]>();
+  for (const finding of findings.slice(0, INLINE_LIMIT)) {
+    const group = groups.get(finding.file);
+    if (group) group.push(finding);
+    else groups.set(finding.file, [finding]);
+  }
+  const comments: FindingComment[] = [];
+  for (const [file, group] of groups) {
+    if (group.length > AGGREGATE_THRESHOLD) {
+      comments.push({
+        body: toAggregatedBody(file, group),
+        key: file,
+        line: Math.min(...group.map((finding) => finding.line)),
+        path: file,
+        side: 'RIGHT',
+      });
+      continue;
+    }
+    for (const finding of group)
+      comments.push({
+        body: toFindingBody(finding),
+        key: `${file}:${finding.line}`,
+        line: finding.line,
+        path: file,
+        side: 'RIGHT',
+      });
+  }
+  return comments;
+};
 
 export const toConclusion = (findings: Finding[]) =>
   findings.some((f) => f.severity === 'error')
@@ -187,14 +284,100 @@ const findPullRequest = async (repo: string, branch?: string) => {
   return pulls[0]?.number;
 };
 
-const upsertComment = async (repo: string, pr: number, body: string, hasFindings: boolean) => {
-  const comments = (await api('GET', `/repos/${repo}/issues/${pr}/comments?per_page=100`)) as {
-    body?: string;
+/** The review comments this script wrote on an earlier run, keyed by marker. */
+const findFindingComments = async (repo: string, pr: number) => {
+  const comments = (await api('GET', `/repos/${repo}/pulls/${pr}/comments?per_page=100`)) as {
+    body?: string | null;
+    id: number;
+    line?: number | null;
+  }[];
+  const byKey = new Map<string, { body?: string | null; id: number; line?: number | null }>();
+  for (const comment of comments) {
+    const key = markerKey(comment.body);
+    if (key) byKey.set(key, comment);
+  }
+  return byKey;
+};
+
+/**
+ * Keep the inline comments current across pushes. An identical body on an
+ * unchanged line costs nothing, a changed body is edited in place (the thread
+ * survives), and only a moved line is deleted and re-created. Comments for keys
+ * this run no longer produces — a fixed finding, a file that dropped below the
+ * aggregation threshold — are deleted.
+ *
+ * A line that is not part of the PR diff cannot carry a comment; the summary
+ * table and the check annotation still carry that finding.
+ */
+const syncFindingComments = async (
+  repo: string,
+  pr: number,
+  sha: string,
+  findings: Finding[],
+) => {
+  const existing = await findFindingComments(repo, pr);
+  const wanted = toFindingComments(findings);
+  const target = new Set(wanted.map((comment) => comment.key));
+
+  for (const [key, comment] of existing) {
+    if (target.has(key)) continue;
+    await api('DELETE', `/repos/${repo}/pulls/comments/${comment.id}`);
+    existing.delete(key);
+  }
+
+  for (const comment of wanted) {
+    const previous = existing.get(comment.key);
+    try {
+      if (previous && previous.line === comment.line) {
+        if (previous.body !== comment.body)
+          await api('PATCH', `/repos/${repo}/pulls/comments/${previous.id}`, {
+            body: comment.body,
+          });
+        continue;
+      }
+      if (previous) await api('DELETE', `/repos/${repo}/pulls/comments/${previous.id}`);
+      await api('POST', `/repos/${repo}/pulls/${pr}/comments`, {
+        body: comment.body,
+        commit_id: sha,
+        line: comment.line,
+        path: comment.path,
+        side: comment.side,
+      });
+    } catch (error) {
+      console.warn(`alint: no inline comment on ${comment.key}: ${String(error)}`);
+    }
+  }
+};
+
+/**
+ * Keep one review on the PR current across pushes. A submitted review cannot be
+ * deleted or replaced, only edited, so its summary body is rewritten in place.
+ */
+const publishReview = async (
+  repo: string,
+  pr: number,
+  sha: string,
+  markdown: string,
+  findings: Finding[],
+) => {
+  const reviews = (await api('GET', `/repos/${repo}/pulls/${pr}/reviews?per_page=100`)) as {
+    body?: string | null;
     id: number;
   }[];
-  const existing = comments.find((comment) => comment.body?.includes(COMMENT_MARKER));
-  if (existing) await api('PATCH', `/repos/${repo}/issues/comments/${existing.id}`, { body });
-  else if (hasFindings) await api('POST', `/repos/${repo}/issues/${pr}/comments`, { body });
+  const existing = [...reviews].reverse().find((review) => review.body?.includes(REVIEW_MARKER));
+
+  if (existing) {
+    if (existing.body !== markdown)
+      await api('PUT', `/repos/${repo}/pulls/${pr}/reviews/${existing.id}`, { body: markdown });
+  } else if (findings.length > 0) {
+    await api('POST', `/repos/${repo}/pulls/${pr}/reviews`, {
+      body: markdown,
+      commit_id: sha,
+      event: 'COMMENT',
+    });
+  }
+
+  await syncFindingComments(repo, pr, sha, findings);
 };
 
 const main = async () => {
@@ -224,12 +407,12 @@ const main = async () => {
     status: 'completed',
   });
 
-  // The comment is a convenience; never let it fail the report.
+  // The review is a convenience; never let it fail the report.
   try {
     const pr = await findPullRequest(repo, process.env.HEAD_REF);
-    if (pr) await upsertComment(repo, pr, markdown, findings.length > 0);
+    if (pr) await publishReview(repo, pr, sha, markdown, findings);
   } catch (error) {
-    console.warn(`alint: could not update the PR comment: ${String(error)}`);
+    console.warn(`alint: could not publish the PR review: ${String(error)}`);
   }
 };
 
