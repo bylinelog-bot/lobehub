@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  COMMENT_MARKER,
+  FINDING_MARKER,
+  REVIEW_MARKER,
   toAnnotations,
   toConclusion,
   toFindings,
   toMarkdown,
+  toReviewComments,
   toTitle,
   toUsageLine,
 } from './report';
@@ -114,6 +116,39 @@ describe('verdict', () => {
   });
 });
 
+describe('toReviewComments', () => {
+  const error = toFindings({ diagnostics: [diagnostic()] }, '/repo');
+
+  it('anchors one comment per finding on the head version of its own line', () => {
+    expect(toReviewComments(error)).toEqual([
+      {
+        body: [
+          FINDING_MARKER,
+          '**`pmap-over-promise-all`** · error',
+          '',
+          'Promise.all fans out over rows | unbounded',
+          '',
+          '💡 use pMap with a cap',
+        ].join('\n'),
+        line: 12,
+        path: 'apps/server/src/services/x.ts',
+        side: 'RIGHT',
+      },
+    ]);
+  });
+
+  it('leaves the suggestion out when the rule has none', () => {
+    const [comment] = toReviewComments(
+      toFindings({ diagnostics: [diagnostic({ message: 'fans out' })] }, '/repo'),
+    );
+    expect(comment.body).not.toContain('💡');
+  });
+
+  it('caps the comments at 50, like the annotations', () => {
+    expect(toReviewComments(Array.from({ length: 60 }, () => error[0]))).toHaveLength(50);
+  });
+});
+
 describe('toMarkdown', () => {
   it('renders a marked comment with a linked row per finding and escaped cells', () => {
     const markdown = toMarkdown(toFindings({ diagnostics: [diagnostic()] }, '/repo'), {
@@ -121,7 +156,7 @@ describe('toMarkdown', () => {
       runUrl: 'https://example.com/run',
       sha: 'abcdef1234567',
     });
-    expect(markdown.startsWith(COMMENT_MARKER)).toBe(true);
+    expect(markdown.startsWith(REVIEW_MARKER)).toBe(true);
     expect(markdown).toContain('### ❌ ALint · 1 error');
     expect(markdown).toContain(
       '[`apps/server/src/services/x.ts:12`](https://github.com/lobehub/lobehub/blob/abcdef1234567/apps/server/src/services/x.ts#L12)',
