@@ -393,5 +393,43 @@ describe('analyzeShellCommand', () => {
       // lines are consumed as data).
       expect(analyzeShellCommand('echo a<<b')[0].words).toEqual(['echo', 'a']);
     });
+
+    it('a redirection after the heredoc operator is not folded into the delimiter', () => {
+      // `<<EOF >/dev/null` declares delimiter `EOF`; folding the redirection
+      // in made the real terminator line unmatched, so the `rm` after the
+      // heredoc was absorbed as stdin data and escaped every predicate.
+      const segs = analyzeShellCommand('cat <<EOF >/dev/null\nhello\nEOF\nrm -rf ~');
+      expect(segs[0].resolvedCommand).toBe('cat');
+      expect(segs[0].words[1]).toBe('hello\n');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+    });
+
+    it('a leading descriptor duplication is a redirection, not a separator', () => {
+      // Splitting on the `&` of `2>&1` produced the bogus commands `2>` and
+      // `1 rm -rf ~`, whose resolved command was `1` — the recursive home
+      // deletion then matched no predicate.
+      const segs = analyzeShellCommand('2>&1 rm -rf ~');
+      expect(segs).toHaveLength(1);
+      expect(segs[0].resolvedCommand).toBe('rm');
+      expect(segs[0].homeTargets).toContain('~');
+
+      const bare = analyzeShellCommand('>&1 rm -rf /');
+      expect(bare).toHaveLength(1);
+      expect(bare[0].resolvedCommand).toBe('rm');
+      expect(bare[0].trailingSlashTargets).toContain('/');
+
+      // `&>` (redirect both streams) is also a redirection, not a background
+      // separator, so the command that follows stays the resolved command.
+      const both = analyzeShellCommand('&>/dev/null rm -rf ~');
+      expect(both[0].resolvedCommand).toBe('rm');
+    });
+
+    it('`<<-` terminator lines may be tab-indented', () => {
+      const segs = analyzeShellCommand('cat <<-EOF\n\thello\n\tEOF\nrm -rf ~');
+      expect(segs[0].words[1]).toBe('hello\n');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+    });
   });
 });

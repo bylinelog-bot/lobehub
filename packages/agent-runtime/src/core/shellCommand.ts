@@ -220,6 +220,7 @@ const splitIntoRawSegments = (command: string): string[] => {
   // body word does.
   let heredocPending = false; // operator seen on this line, delimiter not yet extracted
   let heredocDelimiter: string | null = null; // quote-stripped delimiter, body not yet started
+  let heredocStripTabs = false; // `<<-`: the terminator line may be tab-indented
   let inHeredocBody = false; // body lines are being collected
   let heredocBody = '';
 
@@ -232,17 +233,55 @@ const splitIntoRawSegments = (command: string): string[] => {
   // must NOT be stripped (digit-stripping would corrupt commands ending in
   // digits, e.g. `base64 << EOF` → `base`, and hide the body from analysis).
   // Strip order for the delimiter: `<<-` dash, surrounding quotes, backslash
-  // escape.
+  // escape. The delimiter is ONE shell word: a redirection that follows the
+  // operator on the same line (`cat <<EOF >/dev/null`) is declaration-line
+  // syntax, not part of the delimiter. Folding it in (`EOF >/dev/null`) means
+  // the real terminator line never matches, the heredoc never closes, and the
+  // commands after it (`rm -rf ~`) are swallowed as stdin data — invisible to
+  // every predicate.
   const finalizeHeredocOperator = () => {
     if (!heredocPending) return;
     heredocPending = false;
     const marker = current.lastIndexOf('<<');
     if (marker < 0) return;
-    let delimiter = current.slice(marker + 2).trim();
-    if (delimiter.startsWith('-')) delimiter = delimiter.slice(1);
-    delimiter = delimiter.replaceAll(/^['"]|['"]$/g, '').replace(/^\\/, '');
-    current = current.slice(0, marker);
-    heredocDelimiter = delimiter.length > 0 ? delimiter : null;
+    let rest = current.slice(marker + 2);
+    // `<<-` allows the body and terminator to be tab-indented.
+    heredocStripTabs = false;
+    if (rest.trimStart().startsWith('-')) {
+      heredocStripTabs = true;
+      rest = rest.trimStart().slice(1);
+    }
+    rest = rest.replace(/^[ \t]+/, '');
+    // Read exactly one shell word (quote- and backslash-aware) so the rest of
+    // the declaration line — redirections such as `>/dev/null` — stays in the
+    // segment instead of being folded into the delimiter.
+    let word = '';
+    let wordQuote: '"' | "'" | null = null;
+    let k = 0;
+    while (k < rest.length) {
+      const ch = rest[k];
+      if (wordQuote) {
+        if (ch === wordQuote) wordQuote = null;
+        else word += ch;
+        k++;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        wordQuote = ch;
+        k++;
+        continue;
+      }
+      if (ch === '\\' && k + 1 < rest.length) {
+        word += rest[k + 1];
+        k += 2;
+        continue;
+      }
+      if (/[ \t]/.test(ch) || ch === '\n' || ch === '\r') break;
+      word += ch;
+      k++;
+    }
+    current = current.slice(0, marker) + rest.slice(k);
+    heredocDelimiter = word.length > 0 ? word : null;
   };
 
   for (let i = 0; i < PREPARED.length; i++) {
@@ -253,7 +292,9 @@ const splitIntoRawSegments = (command: string): string[] => {
       // appended to the consuming segment as one double-quoted word — never
       // split into command segments.
       const lineEnd = PREPARED.indexOf('\n', i);
-      const line = PREPARED.slice(i, lineEnd === -1 ? PREPARED.length : lineEnd).replace(/\r$/, '');
+      const raw = PREPARED.slice(i, lineEnd === -1 ? PREPARED.length : lineEnd).replace(/\r$/, '');
+      // `<<-` strips leading tabs from the terminator line before matching.
+      const line = heredocStripTabs ? raw.replace(/^\t+/, '') : raw;
       if (line === heredocDelimiter) {
         // Delimiter found: close the heredoc (the delimiter line is
         // consumed) and attach the body to the segment that holds the
@@ -392,6 +433,17 @@ const splitIntoRawSegments = (command: string): string[] => {
       parts.push(current);
       current = '';
       i++;
+      continue;
+    }
+
+    // `>&` / `&>` are redirection operators, not control operators. Treating
+    // the `&` in `2>&1` as a separator splits a leading descriptor
+    // duplication into the bogus commands `2>` and `1 rm -rf ~`, which
+    // resolves as command `1` and lets the recursive home deletion through
+    // every semantic predicate. Redirections are recognized BEFORE control
+    // operators, matching how the shell parses the line.
+    if (char === '&' && ((current.at(-1) ?? '') === '>' || PREPARED[i + 1] === '>')) {
+      current += char;
       continue;
     }
 
@@ -644,6 +696,16 @@ const tokenizeWords = (raw: string): string[] => {
     if (/\s/.test(char)) {
       flush();
       i++;
+      continue;
+    }
+
+    // `&>` / `&>>` redirect both streams at once: an operator, never argv.
+    // Without this the `&` becomes a word and the command after the
+    // redirection (`&>/dev/null rm -rf ~`) is discarded as its target.
+    if (char === '&' && raw[i + 1] === '>') {
+      flush();
+      i += 2;
+      discardNextWord = true;
       continue;
     }
 
