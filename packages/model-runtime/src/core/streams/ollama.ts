@@ -1,6 +1,6 @@
 import type { ChatResponse } from 'ollama/browser';
 
-import type { ChatCompletionTool, ChatStreamCallbacks } from '../../types';
+import type { ChatStreamCallbacks } from '../../types';
 import { nanoid } from '../../utils/uuid';
 import type { StreamContext, StreamProtocolChunk } from './protocol';
 import {
@@ -8,6 +8,7 @@ import {
   createSSEProtocolTransformer,
   generateToolCallId,
 } from './protocol';
+import type { TextToolCallTool } from './textToolCalls';
 import { createTextToolCallTransformer, isTextToolCallFallbackDisabled } from './textToolCalls';
 
 const transformOllamaStream = (chunk: ChatResponse, stack: StreamContext): StreamProtocolChunk => {
@@ -54,7 +55,7 @@ const transformOllamaStream = (chunk: ChatResponse, stack: StreamContext): Strea
 export const OllamaStream = (
   res: ReadableStream<ChatResponse>,
   cb?: ChatStreamCallbacks,
-  options?: { tools?: ChatCompletionTool[] },
+  options?: { tools?: readonly TextToolCallTool[] },
 ): ReadableStream<Uint8Array> => {
   const streamStack: StreamContext = { id: 'chat_' + nanoid() };
 

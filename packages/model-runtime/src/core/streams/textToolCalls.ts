@@ -1,6 +1,5 @@
 import debug from 'debug';
 
-import type { ChatCompletionTool } from '../../types';
 import { AgentRuntimeErrorType } from '../../types/error';
 import { safeParseJSON } from '../../utils/safeParseJSON';
 import type { StreamProtocolChunk, StreamToolCallChunkData } from './protocol';
@@ -47,12 +46,21 @@ export const TEXT_TOOL_CALL_FALLBACK_DISABLED_ENV = 'DISABLE_TEXT_TOOL_CALL_FALL
 export const isTextToolCallFallbackDisabled = () =>
   typeof process !== 'undefined' && process.env?.[TEXT_TOOL_CALL_FALLBACK_DISABLED_ENV] === '1';
 
+/**
+ * Structural shape of a declared tool. Loose on purpose: requests carry both our own and
+ * OpenAI SDK tool types, and tools without a function (e.g. custom tools) are ignored.
+ */
+export interface TextToolCallTool {
+  function?: { name?: string; parameters?: unknown };
+  type?: string;
+}
+
 export interface ParsedTextToolCall {
   arguments: string;
   name: string;
 }
 
-type ToolSchemas = Map<string, ChatCompletionTool['function']['parameters']>;
+type ToolSchemas = Map<string, unknown>;
 
 const stripEdgeNewline = (value: string) => value.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
 
@@ -120,12 +128,11 @@ const looksLikeToolCall = (body: string) => {
   return content.startsWith('<function=') || content.startsWith('{');
 };
 
-export const createTextToolCallTransformer = (tools?: ChatCompletionTool[]) => {
-  const schemas: ToolSchemas = new Map(
-    (tools ?? [])
-      .filter((tool) => tool?.function?.name)
-      .map((tool) => [tool.function.name, tool.function.parameters]),
-  );
+export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[]) => {
+  const schemas: ToolSchemas = new Map();
+  for (const tool of tools ?? []) {
+    if (tool?.function?.name) schemas.set(tool.function.name, tool.function.parameters);
+  }
 
   // Not applicable: pass every chunk through untouched.
   if (schemas.size === 0) return new TransformStream<StreamProtocolChunk, StreamProtocolChunk>();
