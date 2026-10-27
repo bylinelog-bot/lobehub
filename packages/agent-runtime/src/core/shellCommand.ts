@@ -491,9 +491,20 @@ const tokenizeWords = (raw: string): string[] => {
   let inSubstitution = 0;
   let inBrace = 0;
   let inBacktick = false;
+  // A redirection target is one shell word, so it has to be read through the
+  // same quote/escape machinery as every other word: in `>"/tmp/a b" rm -rf ~`
+  // a naive scan stops inside the filename and the trailing quote then swallows
+  // `rm -rf ~` into an unrelated word, hiding the real command.
+  let discardNextWord = false;
 
   const flush = () => {
-    if (hasWord) words.push(word);
+    if (discardNextWord) {
+      // The first word after a redirection operator is its target, not argv.
+      // Whitespace before it must not clear the pending discard.
+      if (hasWord) discardNextWord = false;
+    } else if (hasWord) {
+      words.push(word);
+    }
     word = '';
     hasWord = false;
   };
@@ -653,9 +664,9 @@ const tokenizeWords = (raw: string): string[] => {
       } else {
         j += 1;
       }
-      // Skip the redirection target token (next word), if any.
-      while (j < raw.length && /\s/.test(raw[j])) j++;
-      while (j < raw.length && !/\s/.test(raw[j])) j++;
+      // Read the target with the normal word scanner and drop it in flush(), so
+      // quoting (`>"/tmp/a b"`, `>'a b'`, `>a\ b`) cannot leak into argv.
+      discardNextWord = true;
       // Advance at least past the operator to guarantee progress.
       i = Math.max(j, i + 1);
       continue;

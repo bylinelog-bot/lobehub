@@ -610,6 +610,39 @@ describe('matchSemanticShellPredicate', () => {
     });
   });
 
+  describe('thirteenth-round review: quoted redirection targets', () => {
+    // A redirection target is a shell word, so a quoted filename containing
+    // whitespace must be consumed whole; otherwise the closing quote swallows
+    // the command that follows and the destructive rm goes unseen.
+    it.each([
+      '>"/tmp/a b" rm -rf ~',
+      ">'/tmp/a b' rm -rf ~",
+      '> /tmp/a\\ b rm -rf ~',
+      '2>"/tmp/a b" rm -rf ~',
+      '>>"/tmp/a b" rm -rf ~',
+      'cat >"/tmp/a b" && rm -rf ~',
+    ])('blocks a home delete hidden behind a quoted redirect target: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(true);
+    });
+
+    it.each([
+      '>"/tmp/a b" rm -rf /',
+      "2>'/tmp/a b' rm -rf /",
+      'rm -rf / >"/tmp/a b"',
+    ])('blocks a root delete hidden behind a quoted redirect target: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+    });
+
+    it.each([
+      // The quoted word is a redirect target, not an rm operand.
+      'rm -rf ~/notes/old >"/tmp/a b"',
+      'ls >"/tmp/a b"',
+      'printf x 2>"/tmp/a b"',
+    ])('still allows reads and in-tree deletes next to quoted redirects: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
+    });
+  });
+
   describe('command substitution containment', () => {
     // Substitution bodies stay embedded inside words rather than splitting the
     // outer command. The predicates above only fire on `rm` as the RESOLVED
