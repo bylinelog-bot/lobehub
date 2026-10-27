@@ -33,7 +33,8 @@ import { generateToolCallId } from './protocol';
 
 const OPEN_TAG = '<tool_call>';
 const CLOSE_TAG = '</tool_call>';
-const FENCE_LINE = /^\s*(?:```|~~~)/;
+// The delimiter run that starts a Markdown fence line.
+const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
 const XML_FUNCTION = /^<function=([^\s>]+)>([\s\S]*?)<\/function>\s*$/;
 // Non-greedy like vLLM's qwen3_coder parser: a literal `</parameter>` inside a value
 // ends that value early.
@@ -180,7 +181,8 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
   // Emitted text since the last newline, plus fenced-code state, decide whether an
   // opening tag may start here.
   let currentLine = '';
-  let inFence = false;
+  // The delimiter that opened the current fenced block, e.g. "````" or "~~~".
+  let openFence: string | undefined;
   let toolIndex = 0;
   let lastId = '';
 
@@ -205,7 +207,19 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
 
     const lines = text.split('\n');
     for (const line of lines.slice(0, -1)) {
-      if (FENCE_LINE.test(currentLine + line)) inFence = !inFence;
+      const fullLine = currentLine + line;
+      const fence = fullLine.match(FENCE_LINE);
+      if (fence && !openFence) {
+        openFence = fence[1];
+      } else if (
+        fence &&
+        // CommonMark: only the same character, at least as long, with nothing after it
+        fence[1][0] === openFence?.[0] &&
+        fence[1].length >= openFence.length &&
+        !fullLine.slice(fence[0].length).trim()
+      ) {
+        openFence = undefined;
+      }
       currentLine = '';
     }
     currentLine += lines.at(-1)!;
@@ -277,7 +291,7 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
       const untilNextLine = newlineIndex === -1 ? pending : pending.slice(0, newlineIndex + 1);
 
       // An opening tag can only start a line outside fenced code.
-      if (inFence || currentLine.trim()) {
+      if (openFence || currentLine.trim()) {
         emitText(controller, untilNextLine);
         pending = pending.slice(untilNextLine.length);
         continue;
