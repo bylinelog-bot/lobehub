@@ -38,6 +38,8 @@ const CLOSE_TAG = '</tool_call>';
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
 const XML_FUNCTION = /^<function=([^\s>]+)>([\s\S]*?)<\/function>\s*$/;
 const XML_FUNCTION_NAME = /^<function=([^\s>]+)>/;
+// Only used to decide whether a JSON block that failed to parse deserves an error.
+const JSON_FUNCTION_NAME = /"name"\s*:\s*"([^"\\]+)"/;
 // Non-greedy like vLLM's qwen3_coder parser: a literal `</parameter>` inside a value
 // ends that value early.
 const XML_PARAMETER = /<parameter=([^\s>]+)>([\s\S]*?)<\/parameter>/g;
@@ -255,7 +257,12 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
     log('restored a %s <tool_call> block as text', closed ? 'non-matching' : 'unclosed');
 
     // A closed block is only an error when it calls a declared tool; otherwise it is text.
-    const malformed = closed && schemas.has(body.trim().match(XML_FUNCTION_NAME)?.[1] ?? '');
+    const content = body.trim();
+    const calledName =
+      content.match(XML_FUNCTION_NAME)?.[1] ??
+      (content.startsWith('{') ? content.match(JSON_FUNCTION_NAME)?.[1] : undefined) ??
+      '';
+    const malformed = closed && schemas.has(calledName);
     if ((!closed && looksLikeToolCall(body)) || malformed) {
       controller.enqueue({
         data: {

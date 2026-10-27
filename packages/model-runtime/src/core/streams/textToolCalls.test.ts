@@ -221,6 +221,16 @@ describe('createTextToolCallTransformer', () => {
     expect(closed.some((c) => c.type === 'error')).toBe(true);
   });
 
+  it.each([
+    ['{"name": "search", "arguments": invalid}'],
+    ['{"arguments": {"query": }, "name": "search"}'],
+  ])('reports a closed JSON call to a declared tool with broken arguments: %s', async (json) => {
+    const output = await run([text(`<tool_call>${json}</tool_call>`)]);
+
+    expect(toolCallsOf(output)).toHaveLength(0);
+    expect(output.find((c) => c.type === 'error')?.data.body.reason).toBe('malformed_tool_call');
+  });
+
   it('reports a closed but malformed call to a declared tool', async () => {
     const block =
       '<tool_call>\n<function=search>\n<parameter=query>a</parameter>\nstray\n</function>\n</tool_call>';
