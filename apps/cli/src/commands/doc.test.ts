@@ -164,6 +164,70 @@ describe('doc command', () => {
         expect.objectContaining({ pageSize: 10 }),
       );
     });
+
+    it('should pass the page index and sort field through', async () => {
+      mockTrpcClient.document.queryDocuments.query.mockResolvedValue({ items: [], total: 0 });
+
+      const program = createProgram();
+      await program.parseAsync([
+        'node',
+        'test',
+        'doc',
+        'list',
+        '--page',
+        '2',
+        '--sort-by',
+        'createdAt',
+      ]);
+
+      expect(mockTrpcClient.document.queryDocuments.query).toHaveBeenCalledWith(
+        expect.objectContaining({ current: 2, pageSize: 30, sortBy: 'createdAt' }),
+      );
+    });
+
+    it('should point at the next page when a full page comes back', async () => {
+      mockTrpcClient.document.queryDocuments.query.mockResolvedValue({
+        items: [
+          { id: 'doc1', title: 'A' },
+          { id: 'doc2', title: 'B' },
+        ],
+        total: 5,
+      });
+
+      const program = createProgram();
+      await program.parseAsync(['node', 'test', 'doc', 'list', '-L', '2']);
+
+      expect(log.info).toHaveBeenCalledWith(expect.stringContaining('next: --page 1'));
+    });
+
+    it('should walk every page with --all', async () => {
+      mockTrpcClient.document.queryDocuments.query.mockClear();
+      mockTrpcClient.document.queryDocuments.query
+        .mockResolvedValueOnce({
+          items: [
+            { id: 'doc1', title: 'A' },
+            { id: 'doc2', title: 'B' },
+          ],
+          total: 3,
+        })
+        .mockResolvedValueOnce({ items: [{ id: 'doc3', title: 'C' }], total: 3 });
+
+      const program = createProgram();
+      await program.parseAsync(['node', 'test', 'doc', 'list', '-L', '2', '--all', '--json', 'id']);
+
+      expect(mockTrpcClient.document.queryDocuments.query).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(consoleSpy.mock.calls[0][0])).toHaveLength(3);
+    });
+
+    it('should reject a page size above the server maximum', async () => {
+      mockTrpcClient.document.queryDocuments.query.mockClear();
+
+      const program = createProgram();
+      await program.parseAsync(['node', 'test', 'doc', 'list', '-L', '500']);
+
+      expect(log.error).toHaveBeenCalledWith(expect.stringContaining('--limit'));
+      expect(mockTrpcClient.document.queryDocuments.query).not.toHaveBeenCalled();
+    });
   });
 
   // ── view ──────────────────────────────────────────────
