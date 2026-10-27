@@ -297,7 +297,8 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
         continue;
       }
 
-      const indent = pending.match(/^[\t ]*/)![0];
+      // Up to three spaces, as in CommonMark: four spaces or a tab start indented code.
+      const indent = pending.match(/^ {0,3}/)![0];
       const rest = pending.slice(indent.length);
 
       if (rest.startsWith(OPEN_TAG)) {

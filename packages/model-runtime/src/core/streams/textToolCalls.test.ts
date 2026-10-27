@@ -227,6 +227,27 @@ describe('createTextToolCallTransformer', () => {
       expect(toolCallsOf(output)).toHaveLength(1);
     });
 
+    it.each([
+      ['four spaces', '    '],
+      ['a tab', '\t'],
+    ])('ignores indented code blocks (%s)', async (_, indent) => {
+      const block = XML_CALL.split('\n')
+        .map((line) => indent + line)
+        .join('\n');
+      const content = `语法示例：\n\n${block}\n\n完成。`;
+      const output = await run(splitEvery(content, 3));
+
+      expect(textOf(output)).toBe(content);
+      expect(toolCallsOf(output)).toHaveLength(0);
+    });
+
+    it('still runs a call indented by up to three spaces', async () => {
+      const output = await run([text(`说明：\n   ${XML_CALL}`)]);
+
+      expect(toolCallsOf(output)).toHaveLength(1);
+      expect(textOf(output)).toBe('说明：\n   ');
+    });
+
     it('ignores the tag in the middle of a line', async () => {
       const content =
         '模型会输出 `<tool_call>{"name": "search", "arguments": {}}</tool_call>` 这种格式';
