@@ -2093,6 +2093,7 @@ export default {
   'taskDetail.runFollowUpPlaceholder': 'Ask a follow-up about this run...',
   'taskDetail.followUpFailed': 'Couldn’t send the follow-up. Your message is kept — try again.',
   'taskDetail.collapseReply': 'Collapse',
+  'taskDetail.conclusion': 'Conclusion',
   'taskDetail.replyInThread': 'Reply in this thread',
   'taskDetail.replyPlaceholder': 'Reply in this thread...',
   'taskDetail.sendFollowUp': 'Send follow up message',

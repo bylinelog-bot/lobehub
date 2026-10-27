@@ -2396,6 +2396,7 @@
   "taskDetail.comment.edit": "Edit",
   "taskDetail.comment.save": "Save",
   "taskDetail.commentPlaceholder": "Leave a comment, or @ a teammate — comments also guide the next run...",
+  "taskDetail.conclusion": "Conclusion",
   "taskDetail.deleteConfirm.content": "This action cannot be undone.",
   "taskDetail.deleteConfirm.ok": "Delete",
   "taskDetail.deleteConfirm.title": "Delete this task?",

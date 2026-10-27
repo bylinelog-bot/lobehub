@@ -4,6 +4,7 @@ import { memo } from 'react';
 import TaskAcceptance from './TaskAcceptance';
 import TaskActivities from './TaskActivities';
 import TaskArtifacts from './TaskArtifacts';
+import TaskConclusion from './TaskConclusion';
 import TaskDetailAssignee from './TaskDetailAssignee';
 import { taskDetailLayoutStyles as styles } from './taskDetailLayoutStyles';
 import TaskDetailRunPauseAction from './TaskDetailRunPauseAction';
@@ -42,6 +43,10 @@ const TaskDetailSections = memo(() => {
         </div>
       </div>
       <Flexbox gap={24} style={{ paddingBottom: 120 }}>
+        {/* A completed task opens on its conclusion. It renders nothing for any
+            other status, so the body keeps leading with the instruction while
+            the work is still ahead. */}
+        <TaskConclusion />
         <TaskInstruction />
         <TaskAcceptance />
         <TaskSubtasks />

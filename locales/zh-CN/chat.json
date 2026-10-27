@@ -2396,6 +2396,7 @@
   "taskDetail.comment.edit": "编辑",
   "taskDetail.comment.save": "保存",
   "taskDetail.commentPlaceholder": "留下评论，输入 @ 可提及成员，评论也会引导下次运行...",
+  "taskDetail.conclusion": "结论",
   "taskDetail.deleteConfirm.content": "此操作不可撤销。",
   "taskDetail.deleteConfirm.ok": "删除",
   "taskDetail.deleteConfirm.title": "确认删除此任务？",
