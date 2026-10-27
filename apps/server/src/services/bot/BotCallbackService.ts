@@ -31,6 +31,7 @@ import type {
   BotReplyLocale,
   PlatformClient,
   PlatformMessenger,
+  ReplyPlacementTargets,
   UsageStats,
 } from './platforms';
 import {
@@ -44,6 +45,7 @@ import {
   THINKING_REACTION_EMOJI,
 } from './platforms';
 import { clearReactionState, getReactionState, saveReactionState } from './reactionState';
+import { resolveReplyPlacement } from './replyPlacement';
 import {
   renderAgentError,
   renderFinalReply,
@@ -132,6 +134,11 @@ export interface BotCallbackBody {
   progressMessageId?: string;
   reason?: string;
   reasoning?: string;
+  /**
+   * Where the reply may land when the agent picks thread vs channel (a top-level channel message).
+   * The agent's `[[reply:…]]` directive selects an entry; absent, replies go to `platformThreadId`.
+   */
+  replyPlacement?: ReplyPlacementTargets;
   shouldContinue?: boolean;
   stepType?: 'call_llm' | 'call_tool';
   thinking?: boolean;
@@ -226,10 +233,25 @@ export class BotCallbackService {
       // Stop typing on the gateway
       this.stopGatewayTyping(connectionId, platformThreadId);
 
+      // The agent may have picked where its reply lands. The directive is stripped either way.
+      const placed = resolveReplyPlacement(body.lastAssistantContent, body.replyPlacement);
+      const replyBody: BotCallbackBody = { ...body, lastAssistantContent: placed.content };
+      const relocated = !!placed.threadId && placed.threadId !== platformThreadId;
+      const replyMessenger = relocated ? client.getMessenger(placed.threadId!) : messenger;
+      if (relocated) {
+        log(
+          'handleCallback: reply placed in %s (%s -> %s)',
+          placed.placement,
+          platformThreadId,
+          placed.threadId,
+        );
+      }
+
       const noReply = await this.handleCompletion(
-        body,
-        messenger,
-        progressMessageId ?? '',
+        replyBody,
+        replyMessenger,
+        // The placeholder sits where the message arrived; a relocated reply is posted fresh.
+        relocated ? '' : (progressMessageId ?? ''),
         client,
         replyLocale,
         charLimit,
@@ -238,6 +260,9 @@ export class BotCallbackService {
         options?.deliveredChunkCount,
         options?.onChunkDelivered,
       );
+      if (relocated && progressMessageId) {
+        await this.dropPlaceholder(messenger, progressMessageId);
+      }
       // Cleanup follows what was actually applied, not the current setting: a
       // run that placed a reaction must still remove it after the bot is
       // switched to `none` mid-run. The setting only decides whether to fall
@@ -261,8 +286,8 @@ export class BotCallbackService {
         await this.labelNoReply(body, noReply, platform, workspaceId);
       } else {
         this.summarizeTopicTitle(
-          { ...body, workspaceId: body.workspaceId ?? workspaceId ?? undefined },
-          messenger,
+          { ...replyBody, workspaceId: body.workspaceId ?? workspaceId ?? undefined },
+          replyMessenger,
         );
       }
       // The topic is idle now — replay any follow-up the bridge parked while
@@ -745,6 +770,23 @@ export class BotCallbackService {
           `[BotCallbackService] failed to send reply chunk ${i}/${lastIndex} (thread=${body.platformThreadId}): ${describePlatformError(error)}`,
         );
       }
+    }
+  }
+
+  /**
+   * Remove the "working on it" placeholder once the reply has gone somewhere else, so the thread
+   * the message arrived in is not left with a stale progress line. Best-effort: a platform without
+   * `deleteMessage`, or a failed delete, leaves the placeholder in place.
+   */
+  private async dropPlaceholder(
+    messenger: PlatformMessenger,
+    progressMessageId: string,
+  ): Promise<void> {
+    if (!messenger.deleteMessage) return;
+    try {
+      await messenger.deleteMessage(progressMessageId);
+    } catch (error) {
+      log('dropPlaceholder: failed to delete placeholder %s: %O', progressMessageId, error);
     }
   }
 

@@ -110,6 +110,16 @@ export async function executeWithCallback(
   // of editing the placeholder.
   const supportsMessageEdit = platformDef?.supportsMessageEdit !== false;
 
+  // A top-level channel message on a platform with threads: the agent picks
+  // thread vs channel with a directive in its reply (see `replyPlacement.ts`).
+  const replyPlacementTargets = opts.client?.getReplyPlacementTargets?.(
+    opts.botContext?.platformThreadId ?? thread.id,
+    userMessage,
+  );
+  if (replyPlacementTargets && botPlatformContext) {
+    botPlatformContext.replyPlacement = { default: replyPlacementTargets.default };
+  }
+
   const {
     agentId,
     botContext,
@@ -311,6 +321,7 @@ export async function executeWithCallback(
     messengerInstallationKey: botContext?.messengerInstallationKey,
     platformThreadId: botContext?.platformThreadId,
     progressMessageId: progressMessage?.id,
+    replyPlacement: replyPlacementTargets,
     // Pass thread name only if it's user-set.
     // Bot-generated threads use "Thread <locale date>" (e.g. "Thread 4/9/2026, 6:00:00 PM"),
     // which always starts with "Thread " followed by a digit.
@@ -378,6 +389,7 @@ export async function executeWithCallback(
     prompt,
     reactionMode,
     replyLocale,
+    replyPlacement: replyPlacementTargets,
     showFeedback: deferFeedback ? showFeedback : undefined,
     toolModeOverride,
     topicId,

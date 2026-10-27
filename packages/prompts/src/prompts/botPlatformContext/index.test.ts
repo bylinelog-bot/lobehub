@@ -208,4 +208,23 @@ describe('formatBotPlatformContext', () => {
     );
     expect(formatBotPlatformContext(base)).not.toContain('NO_REPLY');
   });
+
+  it('lets the agent pick thread vs channel for a top-level channel message', () => {
+    const result = formatBotPlatformContext({
+      platformName: 'Slack',
+      replyPlacement: { default: 'thread' },
+      supportsMarkdown: true,
+    });
+
+    expect(result).toContain('<reply_placement default="thread">');
+    expect(result).toContain('`[[reply:thread]]`');
+    expect(result).toContain('`[[reply:channel]]`');
+    expect(result).toContain('Without it, the reply goes to the thread.');
+  });
+
+  it('omits the placement block when the conversation offers no choice', () => {
+    expect(
+      formatBotPlatformContext({ platformName: 'Slack', supportsMarkdown: true }),
+    ).not.toContain('reply_placement');
+  });
 });

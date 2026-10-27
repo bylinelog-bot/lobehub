@@ -1,5 +1,9 @@
-import type { BotWakeKind } from '@lobechat/types';
-import { BOT_NO_REPLY_REASONS, BOT_NO_REPLY_TOKEN } from '@lobechat/types';
+import type { BotReplyPlacement, BotWakeKind } from '@lobechat/types';
+import {
+  BOT_NO_REPLY_REASONS,
+  BOT_NO_REPLY_TOKEN,
+  BOT_REPLY_PLACEMENT_DIRECTIVE,
+} from '@lobechat/types';
 
 /** One prior topic (session) from the same IM channel. */
 export interface RecentChannelTopic {
@@ -58,6 +62,11 @@ export interface BotPlatformInfo {
   proactive?: boolean;
   /** Pre-injected recent same-channel history (cross-session). */
   recentChannelHistory?: RecentChannelHistory;
+  /**
+   * Set when the agent picks where its reply lands: the message was posted at the top level of a
+   * channel on a platform with threads. Holds the placement used when the agent does not pick.
+   */
+  replyPlacement?: { default: BotReplyPlacement };
   supportsMarkdown: boolean;
   /**
    * How the bot was woken. On `followup` the agent is told it may stay silent; on `mention` (or
@@ -91,6 +100,7 @@ export const formatBotPlatformContext = ({
   platformName,
   proactive,
   recentChannelHistory,
+  replyPlacement,
   supportsMarkdown,
   wakeKind,
   warnings,
@@ -151,6 +161,21 @@ export const formatBotPlatformContext = ({
       'NEVER ask the user for a chat / channel / group ID, and never call `listChannels` to look up the current one — it is right here.',
       'When a `lobe-message` send targets this conversation, omit `botId` / `messengerInstallationId` — the runtime already knows which connection this conversation uses.',
       '</current_conversation>',
+    );
+  }
+
+  if (replyPlacement) {
+    const directive = (placement: BotReplyPlacement) =>
+      `\`[[${BOT_REPLY_PLACEMENT_DIRECTIVE}:${placement}]]\``;
+    lines.push(
+      '',
+      `<reply_placement default="${replyPlacement.default}">`,
+      'This message was posted at the top level of a channel, so you choose where your reply lands:',
+      `- ${directive('thread')}: in a thread under the user's message. Use it for anything that takes real work, runs long, or will need back-and-forth, so the channel stays readable.`,
+      `- ${directive('channel')}: directly in the channel. Use it for a short answer or announcement the whole channel should see.`,
+      `Put the directive on the first line of your reply, on its own. It is removed before delivery. Without it, the reply goes to the ${replyPlacement.default}.`,
+      'If the user says where they want the reply, follow that.',
+      '</reply_placement>',
     );
   }
 

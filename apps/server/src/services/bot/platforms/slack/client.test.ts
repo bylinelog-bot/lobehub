@@ -251,3 +251,39 @@ describe('SlackWebhookClient.extractFiles', () => {
     expect(downloadFileSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('Slack getReplyPlacementTargets', () => {
+  const client = new SlackClientFactory().createClient(
+    {
+      applicationId: 'A0AR7CK6PU4',
+      credentials: { botToken: 'xoxb-test', signingSecret: 'secret' },
+      platform: 'slack',
+      settings: {},
+    },
+    { appUrl: 'https://example.com' },
+  );
+
+  it('offers thread or channel for a top-level channel message, defaulting to the thread', () => {
+    expect(client.getReplyPlacementTargets?.('slack:C1:111.222', { id: '111.222' })).toEqual({
+      channel: 'slack:C1',
+      default: 'thread',
+      thread: 'slack:C1:111.222',
+    });
+  });
+
+  it('offers no choice for a message already inside a thread', () => {
+    expect(
+      client.getReplyPlacementTargets?.('slack:C1:111.222', { id: '333.444' }),
+    ).toBeUndefined();
+  });
+
+  it('offers no choice in a DM', () => {
+    expect(
+      client.getReplyPlacementTargets?.('slack:D1:111.222', { id: '111.222' }),
+    ).toBeUndefined();
+  });
+
+  it('offers no choice without a thread timestamp', () => {
+    expect(client.getReplyPlacementTargets?.('slack:C1', { id: '111.222' })).toBeUndefined();
+  });
+});

@@ -12,7 +12,13 @@ import { SystemAgentService } from '@/server/services/systemAgent';
 import { createBotCompletionWebhook } from '../createBotCompletionHook';
 import { detectNoReply } from '../noReply';
 import { recordNoReplyLabel } from '../noReplyLabel';
-import type { BotReactionMode, BotReplyLocale, PlatformClient } from '../platforms';
+import type {
+  BotMessageAttachment,
+  BotReactionMode,
+  BotReplyLocale,
+  PlatformClient,
+  ReplyPlacementTargets,
+} from '../platforms';
 import {
   DEFAULT_BOT_REACTION_MODE,
   getStepReactionEmoji,
@@ -21,6 +27,7 @@ import {
   THINKING_REACTION_EMOJI,
 } from '../platforms';
 import { renderThrownAgentError } from '../renderThrownError';
+import { resolveReplyPlacement } from '../replyPlacement';
 import {
   renderAgentError,
   renderFinalReply,
@@ -63,6 +70,8 @@ export async function executeWithHooksLocalMode(
     prompt: string;
     reactionMode?: BotReactionMode;
     replyLocale: BotReplyLocale;
+    /** Where the reply may land when the agent picks thread vs channel. */
+    replyPlacement?: ReplyPlacementTargets;
     /**
      * Present for a `followup` wake: shows typing / the placeholder message. Held back until the
      * agent first continues past a step (it is acting, so it has decided to speak).
@@ -93,6 +102,7 @@ export async function executeWithHooksLocalMode(
     prompt,
     reactionMode = DEFAULT_BOT_REACTION_MODE,
     replyLocale,
+    replyPlacement,
     toolModeOverride,
     topicId,
     trigger,
@@ -288,7 +298,14 @@ export async function executeWithHooksLocalMode(
                   return;
                 }
 
-                const lastAssistantContent = event.lastAssistantContent;
+                // The agent may have picked where its reply lands. The directive is stripped
+                // either way; a relocated reply goes out through the platform messenger.
+                const placed = resolveReplyPlacement(event.lastAssistantContent, replyPlacement);
+                const lastAssistantContent = placed.content;
+                const relocatedMessenger =
+                  placed.threadId && placed.threadId !== (botContext?.platformThreadId ?? thread.id)
+                    ? client?.getMessenger(placed.threadId)
+                    : undefined;
                 const noReply = detectNoReply({
                   content: lastAssistantContent,
                   hasAttachments: !!(event.attachments as unknown[] | undefined)?.length,
@@ -369,7 +386,27 @@ export async function executeWithHooksLocalMode(
                         : { markdown: chunk };
 
                     try {
-                      if (progressMessage) {
+                      if (relocatedMessenger) {
+                        const rawAttachments = event.attachments as
+                          BotMessageAttachment[] | undefined;
+                        for (let i = 0; i < chunks.length; i++) {
+                          const text = client?.formatMarkdown?.(chunks[i]) ?? chunks[i];
+                          await relocatedMessenger.createMessage(
+                            i === lastIdx && rawAttachments?.length
+                              ? { attachments: rawAttachments, content: text }
+                              : text,
+                          );
+                        }
+                        // The placeholder sits where the message arrived; drop it.
+                        if (progressMessage) {
+                          await progressMessage.delete().catch((error: unknown) => {
+                            log(
+                              'executeWithCallback[local]: failed to drop placeholder: %O',
+                              error,
+                            );
+                          });
+                        }
+                      } else if (progressMessage) {
                         if (chunks[0] !== lastProgressText) {
                           await progressMessage.edit(buildPostable(chunks[0], 0));
                           lastProgressText = chunks[0];

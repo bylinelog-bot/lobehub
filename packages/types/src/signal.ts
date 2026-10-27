@@ -82,17 +82,17 @@ export interface SignalDecisionMetadata {
 
 /** What a label needs beyond `label`, `source` and `confidence`. No message content, as above. */
 export interface SignalDecisionLabelMetadata {
+  /**
+   * The signal that proved the label, when another event did — e.g. the later manual mention
+   * that shows a `missed_wake`. A signal's `external_id`, not its row id.
+   */
+  evidenceExternalId?: string;
   /** Scenario-specific extras that are not worth a typed field yet. */
   extra?: Record<string, unknown>;
   /** Short rationale from a judge model or a person. */
   rationale?: string;
   /** Machine-readable reason behind the label, e.g. a `BotNoReplyReason`. */
   reason?: string;
-  /**
-   * The signal that proved the label, when another event did — e.g. the later manual mention
-   * that shows a `missed_wake`. A signal's `external_id`, not its row id.
-   */
-  evidenceExternalId?: string;
   /** Where the label was applied: `reaction`, `button`, `admin`, `job`, … */
   surface?: string;
 }
@@ -122,6 +122,22 @@ export type BotWakeKind = (typeof BOT_WAKE_KINDS)[number];
  * followed by `:<reason>` — e.g. `NO_REPLY:duplicate`. Anything else is a normal reply.
  */
 export const BOT_NO_REPLY_TOKEN = 'NO_REPLY';
+
+/**
+ * Where a bot reply lands when the conversation offers a choice (a top-level channel message on a
+ * platform with threads):
+ *
+ * - `thread`: in a thread under the user's message.
+ * - `channel`: directly in the channel.
+ */
+export const BOT_REPLY_PLACEMENTS = ['thread', 'channel'] as const;
+export type BotReplyPlacement = (typeof BOT_REPLY_PLACEMENTS)[number];
+
+/**
+ * The directive an agent puts on a line of its own to pick a placement — `[[reply:thread]]` or
+ * `[[reply:channel]]`. The runtime strips it before delivery.
+ */
+export const BOT_REPLY_PLACEMENT_DIRECTIVE = 'reply';
 
 /** Why a woken agent chose not to speak. */
 export const BOT_NO_REPLY_REASONS = [

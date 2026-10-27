@@ -73,6 +73,7 @@ export type {
   PlatformDefinition,
   PlatformDocumentation,
   PlatformMessenger,
+  ReplyPlacementTargets,
   SerializedPlatformDefinition,
   UsageStats,
   ValidationResult,

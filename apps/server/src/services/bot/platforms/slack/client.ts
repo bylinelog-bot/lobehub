@@ -17,6 +17,7 @@ import {
   messengerContentText,
   type PlatformClient,
   type PlatformMessenger,
+  type ReplyPlacementTargets,
   type UsageStats,
   type ValidationResult,
 } from '../types';
@@ -42,6 +43,26 @@ function extractChannelId(platformThreadId: string): string {
 
 function extractThreadTs(platformThreadId: string): string | undefined {
   return platformThreadId.split(':')[2];
+}
+
+/**
+ * A top-level channel message can be answered in a thread under it (the
+ * adapter's own thread id, `slack:<channel>:<ts>`) or in the channel itself
+ * (`slack:<channel>`, which the messenger posts without `thread_ts`). DMs and
+ * messages already inside a thread keep replying where they are.
+ *
+ * The adapter keys a channel message by `thread_ts ?? ts` and its id is its
+ * own `ts`, so a message is top-level exactly when the two match.
+ */
+function slackReplyPlacementTargets(
+  platformThreadId: string,
+  message?: unknown,
+): ReplyPlacementTargets | undefined {
+  const [, channelId, threadTs] = platformThreadId.split(':');
+  if (!channelId || !threadTs || channelId.startsWith('D')) return undefined;
+  if ((message as { id?: string } | undefined)?.id !== threadTs) return undefined;
+
+  return { channel: `slack:${channelId}`, default: 'thread', thread: platformThreadId };
 }
 
 // ---------- Shared runtime operations mixin ----------
@@ -80,6 +101,7 @@ function createMessenger(config: BotProviderConfig, platformThreadId: string): P
     // attachments flow through createMessage instead.
     editMessage: (messageId, content) =>
       slack.updateMessage(channelId, messageId, messengerContentText(content)),
+    deleteMessage: (messageId) => slack.deleteMessage(channelId, messageId),
     removeReaction: (messageId, emoji) => slack.removeReaction(channelId, messageId, emoji),
     replaceReaction: async (messageId, prevEmoji, nextEmoji) => {
       if (prevEmoji === nextEmoji) return;
@@ -226,6 +248,13 @@ class SlackWebhookClient implements PlatformClient {
 
   getMessenger(platformThreadId: string): PlatformMessenger {
     return createMessenger(this.config, platformThreadId);
+  }
+
+  getReplyPlacementTargets(
+    platformThreadId: string,
+    message?: unknown,
+  ): ReplyPlacementTargets | undefined {
+    return slackReplyPlacementTargets(platformThreadId, message);
   }
 
   async extractFiles(message: Message): Promise<AttachmentSource[] | undefined> {
@@ -425,6 +454,13 @@ class SlackSocketModeClient implements PlatformClient {
 
   getMessenger(platformThreadId: string): PlatformMessenger {
     return createMessenger(this.config, platformThreadId);
+  }
+
+  getReplyPlacementTargets(
+    platformThreadId: string,
+    message?: unknown,
+  ): ReplyPlacementTargets | undefined {
+    return slackReplyPlacementTargets(platformThreadId, message);
   }
 
   async extractFiles(message: Message): Promise<AttachmentSource[] | undefined> {

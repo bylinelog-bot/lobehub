@@ -17,6 +17,8 @@ export interface BotPlatformContext {
   proactive?: boolean;
   /** Pre-injected recent same-channel history for platforms without history-read. */
   recentChannelHistory?: BotPlatformInfo['recentChannelHistory'];
+  /** The agent picks thread vs channel for its reply (see `formatBotPlatformContext`). */
+  replyPlacement?: BotPlatformInfo['replyPlacement'];
   supportsMarkdown: boolean;
   /** `followup` tells the agent it may stay silent (see `formatBotPlatformContext`). */
   wakeKind?: BotPlatformInfo['wakeKind'];

@@ -1,3 +1,4 @@
+import type { BotReplyPlacement } from '@lobechat/types';
 import type { Chat, Message } from 'chat';
 
 import type { AttachmentSource } from '@/server/services/aiAgent/ingestAttachment';
@@ -204,6 +205,11 @@ export interface PlatformMessenger {
    */
   addReaction?: (messageId: string, emoji: string) => Promise<void>;
   createMessage: (content: MessengerContent) => Promise<void>;
+  /**
+   * Delete a message the bot posted (optional). Used to drop the "working on
+   * it" placeholder when the reply lands somewhere else (see `ReplyPlacementTargets`).
+   */
+  deleteMessage?: (messageId: string) => Promise<void>;
   editMessage: (messageId: string, content: MessengerContent) => Promise<void>;
   removeReaction: (messageId: string, emoji: string) => Promise<void>;
   /**
@@ -227,6 +233,22 @@ export interface PlatformMessenger {
   ) => Promise<void>;
   triggerTyping?: () => Promise<void>;
   updateThreadName?: (name: string) => Promise<void>;
+}
+
+// --------------- Reply Placement ---------------
+
+/**
+ * Where a reply to a top-level channel message can go. Each entry is a
+ * `platformThreadId` the platform messenger posts to. The agent picks one with
+ * the `[[reply:thread]]` / `[[reply:channel]]` directive; `default` applies
+ * when it does not.
+ */
+export interface ReplyPlacementTargets {
+  /** Posts at the top level of the channel the message was sent in. */
+  channel: string;
+  default: BotReplyPlacement;
+  /** Posts in the thread under the user's message. */
+  thread: string;
 }
 
 // --------------- Usage Stats ---------------
@@ -368,6 +390,17 @@ export interface PlatformClient {
 
   /** Get a messenger for a specific thread (outbound messaging). */
   getMessenger: (platformThreadId: string) => PlatformMessenger;
+
+  /**
+   * The places a reply to `message` can land, when the agent gets to choose
+   * between a thread and the channel (see `ReplyPlacementTargets`). Return
+   * `undefined` when there is no choice — a DM, or a message already inside
+   * a thread. Not implemented: replies always go to `platformThreadId`.
+   */
+  getReplyPlacementTargets?: (
+    platformThreadId: string,
+    message?: unknown,
+  ) => ReplyPlacementTargets | undefined;
 
   readonly id: string;
 
