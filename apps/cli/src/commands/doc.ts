@@ -6,6 +6,7 @@ import pc from 'picocolors';
 import { getTrpcClient } from '../api/client';
 import { confirm, outputJson, printTable, timeAgo, truncate } from '../utils/format';
 import { log } from '../utils/logger';
+import { formatPageFooter } from '../utils/pagination';
 import { resolveUrlBuilder, resourcePath, withUrl, withUrls } from './resourceUrl';
 import { resolveAppUrlBuilder } from './task/url';
 
@@ -16,25 +17,6 @@ const MAX_LIST_PAGE_SIZE = 100;
 
 const DOC_SORT_FIELDS = ['updatedAt', 'createdAt', 'title'] as const;
 type DocSortField = (typeof DOC_SORT_FIELDS)[number];
-
-function formatPageFooter(params: {
-  count: number;
-  page: number;
-  pageSize: number;
-  total?: number;
-}): string | undefined {
-  const { count, page, pageSize, total } = params;
-  if (typeof total !== 'number') return;
-
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  if (count === 0 && page > totalPages) {
-    return `Page ${page} is past the end · ${total} total · last page: --page ${totalPages}`;
-  }
-  const first = count === 0 ? 0 : (page - 1) * pageSize + 1;
-  const range = count === 0 ? '0' : `${first}-${first + count - 1}`;
-  const next = page < totalPages ? ` · next: --page ${page + 1}` : ' · no more pages';
-  return `Page ${page}/${totalPages} · ${range} of ${total}${next}`;
-}
 
 /**
  * Servers that predate `sortOrder` drop the unknown key and keep listing newest
@@ -130,7 +112,10 @@ export function registerDocCommand(program: Command) {
         const result = await client.document.queryDocuments.query(query);
         const docs = Array.isArray(result) ? result : ((result as any).items ?? []);
         const total = Array.isArray(result) ? undefined : (result as any).total;
-        const footer = formatPageFooter({ count: docs.length, page, pageSize, total });
+        const footer =
+          typeof total === 'number'
+            ? formatPageFooter({ count: docs.length, page, pageSize, total })
+            : undefined;
         if (query.sortOrder && isTimestampOrderReversed(docs, query.sortBy, query.sortOrder)) {
           log.warn(
             `The server ignored --order ${query.sortOrder}; it needs a newer LobeHub server version.`,
