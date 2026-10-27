@@ -65,6 +65,33 @@ describe('analyzeShellCommand', () => {
       expect(segments).toHaveLength(1);
       expect(segments[0].resolvedCommand).toBe('echo');
     });
+
+    it('treats a word-initial # as a comment, not as quote syntax', () => {
+      // The apostrophe in the comment is prose: bash ignores the whole line,
+      // so the deletion on the next line is a real command. Letting the
+      // apostrophe open quote state swallowed the newline and resolved the
+      // segment to `#`, hiding `rm -rf ~` from every predicate.
+      const segments = analyzeShellCommand("# Clean up the user's files\nrm -rf ~");
+      expect(segments).toHaveLength(1);
+      expect(segments[0].resolvedCommand).toBe('rm');
+      expect(segments[0].homeTargets).toContain('~');
+
+      // A trailing comment is dropped as well; the command before it stays.
+      const trailing = analyzeShellCommand('rm -rf ~ # wipe the "old" dirs');
+      expect(trailing).toHaveLength(1);
+      expect(trailing[0].resolvedCommand).toBe('rm');
+      expect(trailing[0].homeTargets).toContain('~');
+    });
+
+    it('keeps # literal when it does not start a word', () => {
+      // In-word `#` is plain text; `${#var}` is preceded by `{`; `\#` is
+      // escaped. None of them may start a comment.
+      expect(analyzeShellCommand('echo foo#bar')[0].words).toEqual(['echo', 'foo#bar']);
+      expect(analyzeShellCommand('echo ${#items[@]} && rm -rf ~')[1].resolvedCommand).toBe('rm');
+      expect(analyzeShellCommand('echo \\#not-a-comment; rm -rf ~')[0].words).toContain(
+        '#not-a-comment',
+      );
+    });
   });
 
   describe('redirection stripping', () => {

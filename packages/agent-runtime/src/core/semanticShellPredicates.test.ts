@@ -656,6 +656,38 @@ describe('matchSemanticShellPredicate', () => {
     });
   });
 
+  describe('fourteenth-round review: shell comments are not syntax', () => {
+    // Bash ignores the rest of the line after a word-initial `#`, so an
+    // apostrophe in prose must not open quote state and swallow the next
+    // command. Both inputs previously resolved the segment to `#`.
+    it.each([
+      "# Clean up the user's files\nrm -rf ~",
+      '# remove the "old" exports\nrm -rf ~',
+      "rm -rf ~ # don't keep the old copy",
+      "ls -la\n# it's the user's home\nrm -rf ~",
+    ])('blocks a home delete that follows a quoted comment: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(true);
+    });
+
+    it.each([
+      "# wipe the user's root\nrm -rf /",
+      '# clean all\nrm -rf /',
+    ])('blocks a root delete that follows a quoted comment: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+    });
+
+    it.each([
+      // Comment-only text is never a command.
+      "# don't delete the user's files",
+      '# rm -rf ~ is documented below',
+      // `#` inside a word stays literal, so this is still a plain git call.
+      'git log --format=foo#bar',
+    ])('does not flag comment text or in-word hashes: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
+    });
+  });
+
   describe('command substitution containment', () => {
     // Substitution bodies stay embedded inside words rather than splitting the
     // outer command. The predicates above only fire on `rm` as the RESOLVED

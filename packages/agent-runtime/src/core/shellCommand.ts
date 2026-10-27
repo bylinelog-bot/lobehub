@@ -351,6 +351,26 @@ const splitIntoRawSegments = (command: string): string[] => {
       continue;
     }
 
+    // A `#` that STARTS A WORD opens a shell comment: the rest of the line is
+    // inert text, so quotes and operators inside it are not syntax. Reading
+    // them as syntax let an apostrophe in prose (`# Clean up the user's
+    // files`) open a phantom single-quoted region that swallowed the following
+    // newline and the real command — `# Clean up the user's files\nrm -rf ~`
+    // then resolved to command `#`, and every predicate missed the deletion
+    // that bash executes. Skip to the line end WITHOUT consuming the newline so
+    // it still separates segments. `#` inside a word (`foo#bar`), inside
+    // `${#var}` (preceded by `{`) and inside legacy backtick substitution stay
+    // literal.
+    if (
+      char === '#' &&
+      !inBacktick &&
+      (i === 0 || /[\s;|&(`]/.test(PREPARED[i - 1] ?? ''))
+    ) {
+      const commentEnd = PREPARED.indexOf('\n', i);
+      i = commentEnd === -1 ? PREPARED.length : commentEnd - 1;
+      continue;
+    }
+
     if (char === '"' || char === "'") {
       quote = char;
       current += char;
