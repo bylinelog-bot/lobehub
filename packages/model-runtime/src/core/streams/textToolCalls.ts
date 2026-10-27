@@ -33,8 +33,9 @@ import { generateToolCallId } from './protocol';
 
 const OPEN_TAG = '<tool_call>';
 const CLOSE_TAG = '</tool_call>';
-// The delimiter run that starts a Markdown fence line.
-const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
+// The delimiter run of a Markdown fence line. As in CommonMark, four spaces or a tab
+// make it indented code instead.
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
 const XML_FUNCTION = /^<function=([^\s>]+)>([\s\S]*?)<\/function>\s*$/;
 // Non-greedy like vLLM's qwen3_coder parser: a literal `</parameter>` inside a value
 // ends that value early.
@@ -209,14 +210,16 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
     for (const line of lines.slice(0, -1)) {
       const fullLine = currentLine + line;
       const fence = fullLine.match(FENCE_LINE);
-      if (fence && !openFence) {
+      const info = fence ? fullLine.slice(fence[0].length) : '';
+      // A backtick fence's info string cannot contain backticks (e.g. ```js `x` is text).
+      if (fence && !openFence && !(fence[1][0] === '`' && info.includes('`'))) {
         openFence = fence[1];
       } else if (
         fence &&
         // CommonMark: only the same character, at least as long, with nothing after it
         fence[1][0] === openFence?.[0] &&
         fence[1].length >= openFence.length &&
-        !fullLine.slice(fence[0].length).trim()
+        !info.trim()
       ) {
         openFence = undefined;
       }

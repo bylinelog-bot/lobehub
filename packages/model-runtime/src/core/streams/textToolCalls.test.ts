@@ -218,12 +218,20 @@ describe('createTextToolCallTransformer', () => {
       ['a shorter inner fence', '````md\n```\n', '```\n````\n'],
       ['a fence of the other character', '```md\n~~~\n', '~~~\n```\n'],
       ['an inner fence with an info string', '```md\n```xml\n', '```\n'],
+      ['a closing fence indented four spaces', '```md\n    ```\n', '```\n'],
+      ['a closing fence indented by a tab', '```md\n\t```\n', '```\n'],
     ])('keeps a fence open across %s', async (_, open, close) => {
       const example = `示例：\n${open}${XML_CALL}\n${close}`;
       const output = await run(splitEvery(`${example}${XML_CALL}`, 4));
 
       expect(textOf(output)).toBe(example);
       // only the call after the closed fence runs
+      expect(toolCallsOf(output)).toHaveLength(1);
+    });
+
+    it('does not treat a backtick line with backticks in its info string as a fence', async () => {
+      const output = await run([text(`\`\`\`js \`x\` 是行内代码\n${XML_CALL}`)]);
+
       expect(toolCallsOf(output)).toHaveLength(1);
     });
 
