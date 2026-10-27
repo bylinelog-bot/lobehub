@@ -325,4 +325,32 @@ describe('getServerGlobalConfig', () => {
 
     await expect(loadServerConfig(false)).resolves.toHaveProperty('agentIdentityProviders', []);
   });
+
+  it('should only advertise Agent Mail when it has a receive path', async () => {
+    vi.stubEnv('LINQ_API_KEY', undefined);
+    vi.stubEnv('AGENT_MAIL_API_KEY', 'am_test');
+    vi.stubEnv('AGENT_MAIL_WEBHOOK_URL', undefined);
+    vi.stubEnv('AGENT_MAIL_WEBHOOK_SECRET', undefined);
+
+    // A mailbox that can be opened but never receives is not an offer.
+    await expect(loadServerConfig(false)).resolves.toHaveProperty('agentIdentityProviders', []);
+
+    // The shared signing secret is enough: deliveries are verified against it
+    // when the account carries no webhook of its own.
+    vi.stubEnv('AGENT_MAIL_WEBHOOK_SECRET', 'whsec_mail');
+    await expect(loadServerConfig(false)).resolves.toHaveProperty('agentIdentityProviders', [
+      'agent-mail',
+    ]);
+  });
+
+  it('should advertise Agent Mail when provisioning registers its own webhook', async () => {
+    vi.stubEnv('LINQ_API_KEY', undefined);
+    vi.stubEnv('AGENT_MAIL_API_KEY', 'am_test');
+    vi.stubEnv('AGENT_MAIL_WEBHOOK_SECRET', undefined);
+    vi.stubEnv('AGENT_MAIL_WEBHOOK_URL', 'https://chat.example.com/accounts/webhooks/agent-mail');
+
+    await expect(loadServerConfig(false)).resolves.toHaveProperty('agentIdentityProviders', [
+      'agent-mail',
+    ]);
+  });
 });

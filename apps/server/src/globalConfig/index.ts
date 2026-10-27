@@ -149,7 +149,15 @@ export const getServerGlobalConfig = async () => {
 
   const config: GlobalServerConfig = {
     agentIdentityProviders: [
-      agentIdentityEnv.ENABLED_AGENT_MAIL ? 'agent-mail' : null,
+      // A key alone cannot receive: the account secret is minted when
+      // provisioning registers a webhook, so without either a public webhook
+      // endpoint or a shared signing secret every inbound delivery is rejected
+      // as unsigned and a fresh mailbox would look active but never fill.
+      // Addresses that already exist stay reachable through the identity tab.
+      agentIdentityEnv.ENABLED_AGENT_MAIL &&
+      !!(agentIdentityEnv.AGENT_MAIL_WEBHOOK_URL || agentIdentityEnv.AGENT_MAIL_WEBHOOK_SECRET)
+        ? 'agent-mail'
+        : null,
       // A key alone cannot open a number: provisioning binds one from the
       // operator pool, so without any number the offer would always fail. Nor
       // can it receive: Linq accounts carry no per-account secret, so without
