@@ -535,6 +535,39 @@ describe('analyzeShellCommand', () => {
       expect(bare[0].homeTargets).toContain('~');
     });
 
+    it('carries the command token index through subshell normalization', () => {
+      // `(rm -rf ~ )` resolves to `rm`, but re-matching the normalized name
+      // missed the raw `(rm` token, so argv came back empty and every
+      // predicate read a deletion bash really executes as a bare word.
+      const segs = analyzeShellCommand('(rm -rf ~ ); echo ~');
+      expect(segs[0].resolvedCommand).toBe('rm');
+      expect(segs[0].homeTargets).toContain('~');
+    });
+
+    it('keeps ANSI-C quoting live after an escaped backslash', () => {
+      // `\\` is one literal backslash, so `$` still opens ANSI-C quoting and
+      // the `;` after the terminator separates: bash deletes the home dir.
+      // Rejecting any preceding backslash absorbed it into `echo`.
+      const segs = analyzeShellCommand(String.raw`echo \\$'\''; rm -rf ~`);
+      expect(segs).toHaveLength(2);
+      expect(segs[0].resolvedCommand).toBe('echo');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+    });
+
+    it('applies double-quote escape rules to a quoted heredoc delimiter', () => {
+      // `<<"E\\OF"` quote-removes to the delimiter `E\OF`; keeping both
+      // declaration backslashes meant the real terminator never matched and
+      // the deletion under the heredoc was read as `cat` data.
+      const segs = analyzeShellCommand(String.raw`cat <<"E\\OF"
+x
+E\OF
+rm -rf ~`);
+      expect(segs[0].resolvedCommand).toBe('cat');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+    });
+
     it('a heredoc delimiter ends at an operator without whitespace', () => {
       // `EOF>/dev/null` (no space) is delimiter `EOF` plus a redirection.
       // Folding the `>/dev/null` into the delimiter meant the terminator line

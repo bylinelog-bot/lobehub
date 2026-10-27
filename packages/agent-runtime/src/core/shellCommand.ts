@@ -163,6 +163,19 @@ const skipShellSyntax = (words: string[], start: number): number => {
 };
 
 /**
+ * Whether the character at `index` is escaped by an ODD run of backslashes.
+ * Looking only at the immediately preceding character treated `\\$'…'` as
+ * escaped, although the two backslashes form ONE literal backslash and `$`
+ * still opens an ANSI-C quote — bash then ran the deletion after the
+ * separator while every predicate read the whole line as one `echo` word.
+ */
+const isEscapedAt = (text: string, index: number): boolean => {
+  let backslashes = 0;
+  for (let k = index - 1; k >= 0 && text[k] === '\\'; k--) backslashes++;
+  return backslashes % 2 === 1;
+};
+
+/**
  * Split command string into segments on `;`, `&`, `|`, `&&`, `||` while
  * respecting single/double quotes and skipping command substitution bodies
  * (they stay embedded in words rather than being split as separators).
@@ -274,8 +287,29 @@ const splitIntoRawSegments = (command: string): string[] => {
     while (k < rest.length) {
       const ch = rest[k];
       if (wordQuote) {
-        if (ch === wordQuote) wordQuote = null;
-        else word += ch;
+        if (ch === wordQuote) {
+          wordQuote = null;
+          k++;
+          continue;
+        }
+        // Shell quote removal inside double quotes: a backslash escapes only
+        // `$`, `` ` ``, `"`, `\` and a newline; before anything else it stays
+        // literal. Reading both declaration backslashes verbatim made the
+        // delimiter `E\\OF`, so the real terminator `E\OF` never matched and
+        // the home deletion below the heredoc was swallowed as `cat` data.
+        if (wordQuote === '"' && ch === '\\' && k + 1 < rest.length) {
+          const escaped = rest[k + 1];
+          if (escaped === '\n') {
+            k += 2;
+            continue;
+          }
+          if (escaped === '$' || escaped === '`' || escaped === '"' || escaped === '\\') {
+            word += escaped;
+            k += 2;
+            continue;
+          }
+        }
+        word += ch;
         k++;
         continue;
       }
@@ -409,7 +443,8 @@ const splitIntoRawSegments = (command: string): string[] => {
       // terminator reopened a phantom quote that swallowed the following
       // separator — `echo $'\''; rm -rf ~` then resolved to `echo` and the
       // deletion reached no predicate.
-      inAnsiCQuote = char === "'" && PREPARED[i - 1] === '$' && PREPARED[i - 2] !== '\\';
+      inAnsiCQuote =
+        char === "'" && PREPARED[i - 1] === '$' && !isEscapedAt(PREPARED, i - 1);
       current += char;
       continue;
     }
@@ -1033,7 +1068,12 @@ const WRAPPER_POSITIONAL_VALUES: Record<string, number> = {
  * embed `=value`. A bare word after a value-consuming flag is that flag's
  * value, not the command.
  */
-const resolveCommandWord = (words: string[]): string | null => {
+/**
+ * Resolved command word plus the token index it came from. The index is
+ * carried through resolution because the normalized name cannot be found
+ * again by exact-word match (`(rm` resolves to `rm`).
+ */
+const resolveCommandWord = (words: string[]): { index: number; name: string } | null => {
   let index = 0;
   // Skip leading assignments (FOO=bar)
   while (index < words.length) {
@@ -1128,7 +1168,7 @@ const resolveCommandWord = (words: string[]): string | null => {
   // Normalize path-qualified executables to their basename so predicates can
   // compare on the bare command name: /bin/rm → rm, ./script.sh → script.sh,
   // /usr/bin/env → env. Bare `/` (root target) has no basename and stays.
-  return commandBasename(commandWord);
+  return { index, name: commandBasename(commandWord) };
 };
 
 /**
@@ -1154,7 +1194,8 @@ export const analyzeShellCommand = (command: string): ShellSegment[] => {
     // Words eligible for command resolution: everything before the first
     // non-flag, non-argument word matters; we keep it simple: resolution uses
     // the full word list.
-    const resolvedCommand = resolveCommandWord(words);
+    const resolved = resolveCommandWord(words);
+    const resolvedCommand = resolved ? resolved.name : null;
     // Flags belong to the RESOLVED command's argv: collecting dash-words from
     // the whole segment would attribute wrapper options to the wrapped
     // command (`xargs -r rm /` — -r is xargs' no-run-if-empty, not an rm
@@ -1163,9 +1204,11 @@ export const analyzeShellCommand = (command: string): ShellSegment[] => {
     // resolved, slice from its raw word; otherwise keep the legacy
     // whole-segment view for the ambiguity fallback (which does not rely on
     // precise flag attribution).
-    const commandIndex = resolvedCommand
-      ? words.findIndex((word) => word === resolvedCommand || word.endsWith(`/${resolvedCommand}`))
-      : -1;
+    // The index comes from resolution, not from re-matching the normalized
+    // name: `(rm -rf ~ )` resolves to `rm`, and an exact-word search for `rm`
+    // missed the raw `(rm` token, leaving argv empty so every predicate read
+    // the deletion as a bare subshell word.
+    const commandIndex = resolved ? resolved.index : -1;
     const flags = collectFlags(commandIndex >= 0 ? words.slice(commandIndex) : words);
     const argWords = commandIndex >= 0 ? words.slice(commandIndex + 1) : [];
     const trailingSlashTargets = argWords.filter(
