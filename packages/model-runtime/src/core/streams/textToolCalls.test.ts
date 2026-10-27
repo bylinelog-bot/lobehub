@@ -201,6 +201,7 @@ describe('createTextToolCallTransformer', () => {
     expect(toolCallsOf(output)).toHaveLength(0);
     const error = output.find((c) => c.type === 'error');
     expect(error?.data.message).toContain('unclosed <tool_call>');
+    expect(error?.data.type).toBe('ModelTextToolCallError');
     // the error precedes the terminal stop chunk
     expect(output.at(-1)).toMatchObject({ type: 'stop' });
   });

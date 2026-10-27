@@ -272,7 +272,7 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
           },
           message: `The model output ${malformed ? 'a malformed' : 'an unclosed'} <tool_call> block, so the tool call could not be executed. Check that the inference server is configured with a tool-call parser for this model.`,
           name: 'TextToolCallParseError',
-          type: AgentRuntimeErrorType.StreamChunkError,
+          type: AgentRuntimeErrorType.ModelTextToolCallError,
         },
         id: lastId,
         type: 'error',
