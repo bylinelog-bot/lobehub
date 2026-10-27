@@ -64,14 +64,18 @@ type ToolSchemas = Map<string, unknown>;
 
 const stripEdgeNewline = (value: string) => value.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
 
+/** `string`, or a union of `string` with `null` such as `['string', 'null']`. */
 const isStringSchema = (schema: any) => {
-  const type = schema?.type;
-  return type === 'string' || (Array.isArray(type) && type.every((t) => t === 'string'));
+  const types = [schema?.type].flat().filter((type) => type !== 'null');
+  return types.length > 0 && types.every((type) => type === 'string');
 };
 
 const convertParameterValue = (raw: string, schema: any): unknown => {
   const value = stripEdgeNewline(raw);
-  if (isStringSchema(schema)) return value;
+  if (isStringSchema(schema)) {
+    const nullable = [schema.type].flat().includes('null');
+    return nullable && value.trim() === 'null' ? null : value;
+  }
 
   const trimmed = value.trim();
   // Without a declared type only structured JSON is decoded, so "123" stays a string.
@@ -123,6 +127,36 @@ export const parseTextToolCallBody = (
   }
 };
 
+/** Whether the JSON text has closed its outermost value and is not inside a string. */
+const isJsonBalanced = (json: string) => {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of json) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === '{' || char === '[') depth += 1;
+    else if (char === '}' || char === ']') depth -= 1;
+  }
+  return depth <= 0 && !inString;
+};
+
+/**
+ * Whether a `</tool_call>` found at `index` ends the envelope rather than sitting inside
+ * an argument: a JSON string or an XML parameter value still being written.
+ */
+const isEnvelopeEnd = (body: string, index: number) => {
+  const head = body.slice(0, index);
+  const content = head.trimStart();
+  if (content.startsWith('{')) return isJsonBalanced(content);
+
+  const openParameter = head.lastIndexOf('<parameter=');
+  return openParameter === -1 || head.includes('</parameter>', openParameter);
+};
+
 const looksLikeToolCall = (body: string) => {
   const content = body.trimStart();
   return content.startsWith('<function=') || content.startsWith('{');
@@ -141,6 +175,8 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
   let pending = '';
   let inToolCall = false;
   let toolCallBody = '';
+  // Where the next `</tool_call>` search starts: earlier text is already ruled out.
+  let closeSearchFrom = 0;
   // Emitted text since the last newline, plus fenced-code state, decide whether an
   // opening tag may start here.
   let currentLine = '';
@@ -216,13 +252,18 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
   const drain = (controller: Controller, final: boolean) => {
     while (pending) {
       if (inToolCall) {
-        // Only the new text, plus a tag split across chunks, can hold the closing tag.
-        const searchFrom = Math.max(0, toolCallBody.length - CLOSE_TAG.length + 1);
         toolCallBody += pending;
         pending = '';
 
-        const closeIndex = toolCallBody.indexOf(CLOSE_TAG, searchFrom);
-        if (closeIndex === -1) break;
+        let closeIndex = toolCallBody.indexOf(CLOSE_TAG, closeSearchFrom);
+        while (closeIndex !== -1 && !isEnvelopeEnd(toolCallBody, closeIndex)) {
+          closeIndex = toolCallBody.indexOf(CLOSE_TAG, closeIndex + 1);
+        }
+        if (closeIndex === -1) {
+          // A closing tag split across chunks may still start in the last few characters.
+          closeSearchFrom = Math.max(0, toolCallBody.length - CLOSE_TAG.length + 1);
+          break;
+        }
 
         pending = toolCallBody.slice(closeIndex + CLOSE_TAG.length);
         const body = toolCallBody.slice(0, closeIndex);
@@ -249,6 +290,7 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
         emitText(controller, indent);
         pending = rest.slice(OPEN_TAG.length);
         inToolCall = true;
+        closeSearchFrom = 0;
         continue;
       }
 

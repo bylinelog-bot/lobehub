@@ -99,6 +99,27 @@ describe('parseTextToolCallBody', () => {
     });
   });
 
+  it('keeps nullable string parameters as strings', () => {
+    const nullable = new Map([
+      [
+        'assign',
+        { properties: { id: { type: ['string', 'null'] }, owner: { type: ['string', 'null'] } } },
+      ],
+    ]);
+    const body = `<function=assign>
+<parameter=id>
+123
+</parameter>
+<parameter=owner>
+null
+</parameter>
+</function>`;
+
+    expect(parseTextToolCallBody(body, nullable)?.arguments).toBe(
+      JSON.stringify({ id: '123', owner: null }),
+    );
+  });
+
   it('rejects undeclared tools', () => {
     expect(parseTextToolCallBody('<function=rm_rf>\n</function>', schemas)).toBeUndefined();
     expect(parseTextToolCallBody('{"name":"rm_rf","arguments":{}}', schemas)).toBeUndefined();
@@ -145,6 +166,20 @@ describe('createTextToolCallTransformer', () => {
     expect(calls.map((c) => [c.index, c.function.name, c.function.arguments])).toEqual([
       [0, 'search', '{"query":"qwen"}'],
       [1, 'search', '{"query":"vllm"}'],
+    ]);
+    expect(textOf(output)).toBe('\n');
+  });
+
+  it.each([1, 5])('keeps a closing tag inside an argument (chunks of %i chars)', async (size) => {
+    const json =
+      '<tool_call>{"name": "search", "arguments": {"query": "what is </tool_call> \\" {"}}</tool_call>\n';
+    const xml =
+      '<tool_call>\n<function=search>\n<parameter=query>\nfind </tool_call> tags\n</parameter>\n</function>\n</tool_call>';
+    const output = await run(splitEvery(json + xml, size));
+
+    expect(toolCallsOf(output).map((c) => JSON.parse(c.function.arguments).query)).toEqual([
+      'what is </tool_call> " {',
+      'find </tool_call> tags',
     ]);
     expect(textOf(output)).toBe('\n');
   });
