@@ -500,5 +500,54 @@ describe('analyzeShellCommand', () => {
       expect(segs[1].resolvedCommand).toBe('rm');
       expect(segs[1].homeTargets).toContain('~');
     });
+
+    it('an escaped apostrophe inside $\'…\' does not end the quote', () => {
+      // ANSI-C quoting keeps backslash escapes live, so `\''` is a literal
+      // apostrophe followed by the real terminator. Reading the escaped one
+      // as the terminator reopened a phantom quote that absorbed the
+      // separator, so the deletion already executed by bash was invisible.
+      const segs = analyzeShellCommand("echo $'\\''; rm -rf ~");
+      expect(segs).toHaveLength(2);
+      expect(segs[0].resolvedCommand).toBe('echo');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+
+      // Plain single quotes keep the backslash literal, so `\'` is a
+      // backslash plus the real terminator and the deletion still splits —
+      // exactly the difference the ANSI-C branch has to preserve.
+      const plain = analyzeShellCommand("echo 'a\\'; rm -rf ~");
+      expect(plain).toHaveLength(2);
+      expect(plain[1].resolvedCommand).toBe('rm');
+      expect(plain[1].homeTargets).toContain('~');
+    });
+
+    it('input descriptor duplication is a redirection, not a separator', () => {
+      // `0<&0` duplicates stdin; recognizing only `>&` split this into `0<`
+      // and `0 rm -rf ~`, whose resolved command was `0`.
+      const segs = analyzeShellCommand('0<&0 rm -rf ~');
+      expect(segs).toHaveLength(1);
+      expect(segs[0].resolvedCommand).toBe('rm');
+      expect(segs[0].homeTargets).toContain('~');
+
+      const bare = analyzeShellCommand('<&0 rm -rf ~');
+      expect(bare).toHaveLength(1);
+      expect(bare[0].resolvedCommand).toBe('rm');
+      expect(bare[0].homeTargets).toContain('~');
+    });
+
+    it('a heredoc delimiter ends at an operator without whitespace', () => {
+      // `EOF>/dev/null` (no space) is delimiter `EOF` plus a redirection.
+      // Folding the `>/dev/null` into the delimiter meant the terminator line
+      // never matched and the trailing `rm -rf ~` was read as stdin data.
+      const segs = analyzeShellCommand('cat <<EOF>/dev/null\nhello\nEOF\nrm -rf ~');
+      expect(segs[0].resolvedCommand).toBe('cat');
+      expect(segs[0].words[1]).toBe('hello\n');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+
+      // Same shape with a pipe: `<<EOF|wc` closes the delimiter at `|`.
+      const piped = analyzeShellCommand('cat <<EOF|wc -l\nhello\nEOF\nrm -rf ~');
+      expect(piped.some((seg) => seg.resolvedCommand === 'rm')).toBe(true);
+    });
   });
 });

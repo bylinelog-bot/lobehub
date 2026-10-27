@@ -119,6 +119,14 @@ const SHELL_RESERVED_COMMAND_PREFIXES = new Set([
 const SHELL_COMPOUND_SYNTAX_WORDS = new Set(['{', '}', '(', ')', 'case', 'esac', 'select', 'in']);
 
 /**
+ * Characters that terminate an unquoted shell WORD. A heredoc delimiter is a
+ * single word, so an operator that follows it without whitespace
+ * (`<<EOF>/dev/null`) starts the next token instead of extending the
+ * delimiter.
+ */
+const SHELL_WORD_METACHARACTERS = ['|', '&', ';', '<', '>', '(', ')'];
+
+/**
  * Skip leading shell syntax so the real command word can be resolved.
  *
  * `case WORD in PATTERN) COMMAND;; esac` is the awkward shape: the selector
@@ -196,6 +204,9 @@ const splitIntoRawSegments = (command: string): string[] => {
   const parts: string[] = [];
   let current = '';
   let quote: '"' | "'" | null = null;
+  // `$'…'` (ANSI-C) quoting: escapes are live, so the quote is only closed by
+  // an UNESCAPED apostrophe. Plain `'…'` keeps every backslash literal.
+  let inAnsiCQuote = false;
   // Tracks positions of unquoted command substitutions: we DO split on
   // separators outside quotes; substitution content retains its separators
   // because $( and backtick regions are tracked below.
@@ -278,7 +289,12 @@ const splitIntoRawSegments = (command: string): string[] => {
         k += 2;
         continue;
       }
-      if (/[ \t]/.test(ch) || ch === '\n' || ch === '\r') break;
+      // The delimiter is ONE shell WORD, so it ends at the shell's word
+      // delimiters — whitespace AND unquoted metacharacters. `EOF>/dev/null`
+      // (no space) folded the redirection into the delimiter, so the real
+      // terminator line never matched, the heredoc never closed, and the
+      // `rm -rf ~` after it was swallowed as stdin data.
+      if (/[ \t\n\r]/.test(ch) || SHELL_WORD_METACHARACTERS.includes(ch)) break;
       word += ch;
       k++;
     }
@@ -319,6 +335,21 @@ const splitIntoRawSegments = (command: string): string[] => {
 
     if (quote) {
       current += char;
+      // ANSI-C quoting keeps backslash escapes live: `\'` is a literal
+      // apostrophe, never the closing quote. Consume the pair so the quote
+      // state survives the escape instead of ending the segment early.
+      if (inAnsiCQuote) {
+        if (char === '\\' && i + 1 < PREPARED.length) {
+          current += PREPARED[i + 1];
+          i++;
+          continue;
+        }
+        if (char === "'") {
+          quote = null;
+          inAnsiCQuote = false;
+        }
+        continue;
+      }
       // Escape handling inside quotes. In double quotes `\<newline>` is a
       // line continuation (removed by the shell); other escaped chars stay.
       if (quote === '"' && char === '\\' && i + 1 < PREPARED.length) {
@@ -373,6 +404,12 @@ const splitIntoRawSegments = (command: string): string[] => {
 
     if (char === '"' || char === "'") {
       quote = char;
+      // `$'\''` is ANSI-C quoting: backslash escapes are LIVE inside it, so
+      // an escaped apostrophe does not close the quote. Treating `\''` as the
+      // terminator reopened a phantom quote that swallowed the following
+      // separator — `echo $'\''; rm -rf ~` then resolved to `echo` and the
+      // deletion reached no predicate.
+      inAnsiCQuote = char === "'" && PREPARED[i - 1] === '$' && PREPARED[i - 2] !== '\\';
       current += char;
       continue;
     }
@@ -476,7 +513,14 @@ const splitIntoRawSegments = (command: string): string[] => {
     // resolves as command `1` and lets the recursive home deletion through
     // every semantic predicate. Redirections are recognized BEFORE control
     // operators, matching how the shell parses the line.
-    if (char === '&' && ((current.at(-1) ?? '') === '>' || PREPARED[i + 1] === '>')) {
+    // Descriptor duplication applies to BOTH directions: `>&` (output) and
+    // `<&` (input, e.g. `0<&0 rm -rf ~`). Recognizing only `>&` split the
+    // input form into `0<` and `0 rm -rf ~`, whose resolved command was `0`.
+    const previousChar = current.at(-1) ?? '';
+    if (
+      char === '&' &&
+      (previousChar === '>' || previousChar === '<' || PREPARED[i + 1] === '>')
+    ) {
       current += char;
       continue;
     }
