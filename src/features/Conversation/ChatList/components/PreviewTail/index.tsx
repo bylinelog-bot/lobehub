@@ -4,10 +4,12 @@ import { Flexbox } from '@lobehub/ui';
 import type { ReactNode } from 'react';
 import { memo } from 'react';
 
+import { delayed } from '@/components/Skeleton/Delayed';
 import type { TopicPreview } from '@/services/message/topicPreview';
 
 import WideScreenContainer from '../../../../WideScreenContainer';
 import { ChatItem } from '../../../ChatItem';
+import SkeletonList from '../../../components/SkeletonList';
 import { useAgentMeta } from '../../../hooks';
 import MessageContent from '../../../Messages/Assistant/components/MessageContent';
 import { AssistantMessageExtra } from '../../../Messages/Assistant/Extra';
@@ -36,6 +38,7 @@ const PreviewTail = memo<PreviewTailProps>(({ headerSlot, overlayHeight, preview
       style={{ minHeight: 0, overflow: 'hidden', paddingBottom: Math.max(24, overlayHeight + 12) }}
     >
       {headerSlot && <WideScreenContainer>{headerSlot}</WideScreenContainer>}
+      <Flexbox flex={'none'}>{delayed(<SkeletonList />)}</Flexbox>
       <WideScreenContainer style={{ position: 'relative' }}>
         <ChatItem
           showTitle
