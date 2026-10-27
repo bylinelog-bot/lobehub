@@ -274,6 +274,26 @@ describe('createTextToolCallTransformer', () => {
       expect(toolCallsOf(output)).toHaveLength(0);
     });
 
+    it.each([
+      ['four spaces', ['    ']],
+      ['a tab', ['\t']],
+      ['two plus two spaces', ['  ', '  ']],
+      ['three plus one spaces', ['   ', ' ']],
+    ])('ignores indentation split from the tag across chunks (%s)', async (_, indents) => {
+      const chunks = ['语法示例：\n\n', ...indents, `${XML_CALL}\n`];
+      const output = await run(chunks.map(text));
+
+      expect(textOf(output)).toBe(chunks.join(''));
+      expect(toolCallsOf(output)).toHaveLength(0);
+    });
+
+    it('runs a call whose short indentation arrives in its own chunk', async () => {
+      const output = await run([text('说明：\n'), text('  '), text(' '), text(XML_CALL)]);
+
+      expect(toolCallsOf(output)).toHaveLength(1);
+      expect(textOf(output)).toBe('说明：\n   ');
+    });
+
     it('still runs a call indented by up to three spaces', async () => {
       const output = await run([text(`说明：\n   ${XML_CALL}`)]);
 
@@ -347,6 +367,38 @@ describe('createTextToolCallTransformer', () => {
       expect(toolCallsOf(output).map((c) => c.index)).toEqual([0, 1, 1]);
     });
   });
+});
+
+describe('chunk boundary invariance', () => {
+  const indented = (indent: string) =>
+    XML_CALL.split('\n')
+      .map((line) => indent + line)
+      .join('\n');
+  const corpus = [
+    `说明。\n\n${XML_CALL}\n结束`,
+    `示例：\n\`\`\`\`md\n\`\`\`\n${XML_CALL}\n\`\`\`\n\`\`\`\`\n${XML_CALL}`,
+    `示例：\n\`\`\`md\n    \`\`\`\n\t~~~\n${XML_CALL}\n\`\`\`\n`,
+    `示例：\n\n${indented('    ')}\n\n${indented('\t')}\n\n   ${XML_CALL}`,
+    '<tool_call>{"name": "search", "arguments": {"query": "a </tool_call> b"}}</tool_call>\n',
+    '行内 <tool_call>{"name": "search", "arguments": {}}</tool_call> 不算\n<tool_call> 普通文字',
+    '<tool_call>\n<function=search>\n<parameter=query>cut\n</function>\n</tool_call>',
+  ];
+
+  const summarize = (chunks: StreamProtocolChunk[]) => ({
+    calls: toolCallsOf(chunks).map((c) => [c.function.name, c.function.arguments]),
+    errors: chunks.filter((c) => c.type === 'error').map((c) => c.data.body.reason),
+    text: textOf(chunks),
+  });
+
+  it.each(corpus.map((content, i) => [i, content]))(
+    'gives the same result for every chunk size (case %i)',
+    async (_, content) => {
+      const expected = summarize(await run([text(content)]));
+      for (let size = 1; size <= 8; size++) {
+        expect(summarize(await run(splitEvery(content, size)))).toEqual(expected);
+      }
+    },
+  );
 });
 
 describe('stream integration', () => {

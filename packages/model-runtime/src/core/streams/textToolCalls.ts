@@ -309,7 +309,15 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
       }
 
       // Up to three spaces, as in CommonMark: four spaces or a tab start indented code.
-      const indent = pending.match(/^ {0,3}/)![0];
+      // The indentation emitted from earlier chunks of this line counts too.
+      const lineIndent = (currentLine + pending).match(/^ {0,3}/)![0];
+      if (lineIndent.length < currentLine.length) {
+        emitText(controller, untilNextLine);
+        pending = pending.slice(untilNextLine.length);
+        continue;
+      }
+
+      const indent = lineIndent.slice(currentLine.length);
       const rest = pending.slice(indent.length);
 
       if (rest.startsWith(OPEN_TAG)) {
