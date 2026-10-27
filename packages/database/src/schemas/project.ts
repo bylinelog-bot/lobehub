@@ -23,6 +23,7 @@ import { agents } from './agent';
 import { chatGroups } from './chatGroup';
 import { devices } from './device';
 import { knowledgeBases } from './file';
+import { taskNumberNamespaces } from './taskNumberNamespace';
 import { users } from './user';
 import { workspaces } from './workspace';
 
@@ -44,6 +45,7 @@ export const projects = pgTable(
      * project's tasks keep the default prefix of their scope.
      */
     identifier: varchar('identifier', { length: 6 }),
+    namespaceId: uuid('namespace_id').references(() => taskNumberNamespaces.id),
     name: varchar('name', { length: 255 }).notNull(),
     description: text('description'),
     avatar: text('avatar'),

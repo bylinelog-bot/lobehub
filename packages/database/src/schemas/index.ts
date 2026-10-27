@@ -64,6 +64,7 @@ export * from './signal';
 export * from './signalDecision';
 export * from './systemBotProvider';
 export * from './task';
+export * from './taskNumberNamespace';
 export * from './topic';
 export * from './topicComment';
 export * from './trash';

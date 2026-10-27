@@ -3205,6 +3205,7 @@ table projects {
   id text [pk, not null]
   slug varchar(100)
   identifier varchar(6)
+  namespace_id uuid
   name varchar(255) [not null]
   description text
   avatar text
@@ -4103,6 +4104,7 @@ table tasks {
   id text [pk, not null]
   identifier text [not null]
   seq integer [not null]
+  namespace_id uuid
   created_by_user_id text [not null]
   workspace_id text
   project_id text
@@ -4140,6 +4142,7 @@ table tasks {
   updated_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
+    (namespace_id, seq) [name: 'tasks_namespace_seq_unique', unique]
     
     (identifier, created_by_user_id) [name: 'tasks_identifier_idx', unique]
     created_by_user_id [name: 'tasks_created_by_user_id_idx']
@@ -4155,6 +4158,23 @@ table tasks {
     (project_id, status) [name: 'tasks_project_id_status_idx']
     (workspace_id, visibility, created_by_user_id) [name: 'tasks_workspace_visibility_idx']
     (workspace_id, identifier) [name: 'tasks_identifier_workspace_id_unique', unique]
+  }
+}
+
+table task_number_namespaces {
+  id uuid [pk, not null, default: `gen_random_uuid()`]
+  user_id text
+  workspace_id text
+  prefix text [not null]
+  counter bigint [not null, default: 0]
+  accessed_at "timestamp with time zone" [not null, default: `now()`]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+    (user_id, prefix) [name: 'task_number_namespaces_user_prefix_unique', unique]
+    (workspace_id, prefix) [name: 'task_number_namespaces_workspace_prefix_unique', unique]
   }
 }
 
@@ -4377,6 +4397,7 @@ table user_settings {
 
 table users {
   id text [pk, not null]
+  default_namespace_id uuid
   username text [unique]
   email text [unique]
   normalized_email text [unique]
@@ -5174,6 +5195,7 @@ table workspace_user_settings {
 
 table workspaces {
   id text [pk, not null]
+  default_namespace_id uuid
   slug varchar(100) [not null]
   name varchar(255) [not null]
   description varchar(1000)

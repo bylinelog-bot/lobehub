@@ -1,14 +1,19 @@
 import { DEFAULT_PREFERENCE } from '@lobechat/const';
 import type { UserAgentOnboarding, UserOnboarding } from '@lobechat/types';
 import { sql } from 'drizzle-orm';
-import { boolean, index, jsonb, pgTable, text, varchar } from 'drizzle-orm/pg-core';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { boolean, index, jsonb, pgTable, text, uuid, varchar } from 'drizzle-orm/pg-core';
 
 import { timestamps, timestamptz } from './_helpers';
+import { taskNumberNamespaces } from './taskNumberNamespace';
 
 export const users = pgTable(
   'users',
   {
     id: text('id').primaryKey().notNull(),
+    defaultNamespaceId: uuid('default_namespace_id').references(
+      (): AnyPgColumn => taskNumberNamespaces.id,
+    ),
     username: text('username').unique(),
     email: text('email').unique(),
     normalizedEmail: text('normalized_email').unique(),

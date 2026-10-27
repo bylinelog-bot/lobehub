@@ -22,6 +22,7 @@ import { agents } from './agent';
 import { agentCronJobs } from './agentCronJob';
 import { documents } from './file';
 import { projects } from './project';
+import { taskNumberNamespaces } from './taskNumberNamespace';
 import { topics } from './topic';
 import { users } from './user';
 import { workspaces } from './workspace';
@@ -39,6 +40,7 @@ export const tasks = pgTable(
     // Workspace-level identifier (e.g. 'T-1', 'PROJ-42')
     identifier: text('identifier').notNull(),
     seq: integer('seq').notNull(),
+    namespaceId: uuid('namespace_id').references(() => taskNumberNamespaces.id),
     // Creator (user or agent)
     createdByUserId: text('created_by_user_id')
       .references(() => users.id, { onDelete: 'cascade' })
@@ -114,6 +116,9 @@ export const tasks = pgTable(
     ...timestamps,
   },
   (t) => [
+    uniqueIndex('tasks_namespace_seq_unique')
+      .on(t.namespaceId, t.seq)
+      .where(isNotNull(t.namespaceId)),
     // Self-referential FK (defined here to avoid TS circular inference)
     foreignKey({
       columns: [t.parentTaskId],

@@ -1,5 +1,6 @@
 import type { WorkspaceUserPreference } from '@lobechat/types';
 import { sql } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   boolean,
   foreignKey,
@@ -16,6 +17,7 @@ import {
 
 import { createNanoId } from '../utils/idGenerator';
 import { createdAt, timestamptz, updatedAt } from './_helpers';
+import { taskNumberNamespaces } from './taskNumberNamespace';
 import { users } from './user';
 
 export const workspaces = pgTable(
@@ -25,6 +27,9 @@ export const workspaces = pgTable(
       .$defaultFn(() => createNanoId(16)())
       .notNull()
       .primaryKey(),
+    defaultNamespaceId: uuid('default_namespace_id').references(
+      (): AnyPgColumn => taskNumberNamespaces.id,
+    ),
     slug: varchar('slug', { length: 100 }).notNull(),
     name: varchar('name', { length: 255 }).notNull(),
     description: varchar('description', { length: 1000 }),
