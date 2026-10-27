@@ -73,6 +73,10 @@ const InboxMessageModal = memo<InboxMessageModalProps>(({ id }) => {
     );
   }
 
+  // An older server may omit `attachments` entirely; the guard above only covers
+  // the payload root, so normalize the field once instead of trusting it.
+  const attachments = data.attachments ?? [];
+
   return (
     <Flexbox gap={14} padding={4}>
       <Text fontSize={16} weight={600}>
@@ -92,14 +96,14 @@ const InboxMessageModal = memo<InboxMessageModalProps>(({ id }) => {
       >
         {data.text}
       </Text>
-      {data.attachments.length > 0 && (
+      {attachments.length > 0 && (
         <Flexbox gap={6}>
           <Text fontSize={12} type={'secondary'}>
             {t('identity.inbox.detail.attachments')}
           </Text>
           {/* Descriptors, not links: the bytes stay with the mail provider, so the
               list says what was sent without fetching any of it. */}
-          {data.attachments.map((attachment) => (
+          {attachments.map((attachment) => (
             <Text
               fontSize={13}
               key={attachment.index}
