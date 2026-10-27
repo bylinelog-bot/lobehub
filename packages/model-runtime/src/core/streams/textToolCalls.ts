@@ -37,6 +37,7 @@ const CLOSE_TAG = '</tool_call>';
 // make it indented code instead.
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
 const XML_FUNCTION = /^<function=([^\s>]+)>([\s\S]*?)<\/function>\s*$/;
+const XML_FUNCTION_NAME = /^<function=([^\s>]+)>/;
 // Non-greedy like vLLM's qwen3_coder parser: a literal `</parameter>` inside a value
 // ends that value early.
 const XML_PARAMETER = /<parameter=([^\s>]+)>([\s\S]*?)<\/parameter>/g;
@@ -104,6 +105,9 @@ export const parseTextToolCallBody = (
   if (xml) {
     const [, name, paramsBlock] = xml;
     if (!schemas.has(name)) return;
+    // Anything besides complete parameters (e.g. one cut off before `</parameter>`) means
+    // the arguments are incomplete: never run a tool with part of them.
+    if (paramsBlock.replaceAll(XML_PARAMETER, '').trim()) return;
 
     const properties = (schemas.get(name) as any)?.properties;
     const args: Record<string, unknown> = {};
@@ -250,12 +254,16 @@ export const createTextToolCallTransformer = (tools?: readonly TextToolCallTool[
     emitText(controller, OPEN_TAG + body + (closed ? CLOSE_TAG : ''));
     log('restored a %s <tool_call> block as text', closed ? 'non-matching' : 'unclosed');
 
-    if (!closed && looksLikeToolCall(body)) {
+    // A closed block is only an error when it calls a declared tool; otherwise it is text.
+    const malformed = closed && schemas.has(body.trim().match(XML_FUNCTION_NAME)?.[1] ?? '');
+    if ((!closed && looksLikeToolCall(body)) || malformed) {
       controller.enqueue({
         data: {
-          body: { name: 'TextToolCallParseError', reason: 'unclosed_tool_call' },
-          message:
-            'The model output an unclosed <tool_call> block, so the tool call could not be executed. Check that the inference server is configured with a tool-call parser for this model.',
+          body: {
+            name: 'TextToolCallParseError',
+            reason: malformed ? 'malformed_tool_call' : 'unclosed_tool_call',
+          },
+          message: `The model output ${malformed ? 'a malformed' : 'an unclosed'} <tool_call> block, so the tool call could not be executed. Check that the inference server is configured with a tool-call parser for this model.`,
           name: 'TextToolCallParseError',
           type: AgentRuntimeErrorType.StreamChunkError,
         },

@@ -205,6 +205,31 @@ describe('createTextToolCallTransformer', () => {
     expect(output.at(-1)).toMatchObject({ type: 'stop' });
   });
 
+  it.each([
+    ['the only parameter', '<parameter=query>foo\n'],
+    ['a later parameter', '<parameter=query>a</parameter>\n<parameter=limit>2\n'],
+  ])('never runs a call when %s is cut off', async (_, params) => {
+    const body = `<tool_call>\n<function=search>\n${params}</function>\n`;
+
+    const unclosed = await run([text(body), { data: 'stop', id: 'chat_1', type: 'stop' }]);
+    expect(toolCallsOf(unclosed)).toHaveLength(0);
+    expect(textOf(unclosed)).toBe(body);
+    expect(unclosed.find((c) => c.type === 'error')?.data.message).toContain('unclosed');
+
+    const closed = await run([text(`${body}</tool_call>`)]);
+    expect(toolCallsOf(closed)).toHaveLength(0);
+    expect(closed.some((c) => c.type === 'error')).toBe(true);
+  });
+
+  it('reports a closed but malformed call to a declared tool', async () => {
+    const block =
+      '<tool_call>\n<function=search>\n<parameter=query>a</parameter>\nstray\n</function>\n</tool_call>';
+    const output = await run([text(block)]);
+
+    expect(textOf(output)).toBe(block);
+    expect(output.find((c) => c.type === 'error')?.data.body.reason).toBe('malformed_tool_call');
+  });
+
   describe('false positives', () => {
     it('ignores tool calls inside fenced code blocks', async () => {
       const content = `示例输出：\n\`\`\`xml\n${XML_CALL}\n\`\`\`\n`;
