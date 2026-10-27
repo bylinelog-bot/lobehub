@@ -7,7 +7,12 @@ import type {
 import type { Pricing } from 'model-bank';
 
 import { parseToolCalls } from '../../helpers';
-import type { ChatStreamCallbacks, OnFinishData, UsageMissingDiagnostics } from '../../types';
+import type {
+  ChatCompletionTool,
+  ChatStreamCallbacks,
+  OnFinishData,
+  UsageMissingDiagnostics,
+} from '../../types';
 import { AgentRuntimeErrorType } from '../../types/error';
 import { safeParseJSON } from '../../utils/safeParseJSON';
 import type { SignatureScope } from '../../utils/signatureScope';
@@ -22,6 +27,11 @@ export type ChatPayloadForTransformStream = {
   pricingOptions?: ComputeChatCostOptions;
   provider?: string;
   reasoningSignatureScope?: SignatureScope;
+  /**
+   * Tools declared by the request. When set, text-protocol tool calls (e.g. Qwen's
+   * `<tool_call>` blocks) in the content are converted into native tool calls.
+   */
+  textToolCallTools?: ChatCompletionTool[];
   thoughtSignatureScope?: SignatureScope;
 };
 

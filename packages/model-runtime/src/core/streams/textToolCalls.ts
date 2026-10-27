@@ -1,0 +1,296 @@
+import debug from 'debug';
+
+import type { ChatCompletionTool } from '../../types';
+import { AgentRuntimeErrorType } from '../../types/error';
+import { safeParseJSON } from '../../utils/safeParseJSON';
+import type { StreamProtocolChunk, StreamToolCallChunkData } from './protocol';
+import { generateToolCallId } from './protocol';
+
+/**
+ * Text-protocol tool call fallback.
+ *
+ * Self-hosted inference servers (e.g. vLLM without `--tool-call-parser`) return the
+ * tool calls of Qwen-family models as plain text instead of native `tool_calls`:
+ *
+ *   <tool_call>
+ *   <function=NAME>
+ *   <parameter=KEY>VALUE</parameter>
+ *   </function>
+ *   </tool_call>
+ *
+ * or the JSON variant `<tool_call>{"name": ..., "arguments": {...}}</tool_call>`.
+ * Without a fallback the block renders as message text and no tool runs, so the agent
+ * loop silently stops. This transformer buffers such blocks out of the text stream and
+ * re-emits them as standard `tool_calls` chunks.
+ *
+ * Guards against false positives: it only runs when the request declared tools, the
+ * opening tag must start a line outside a fenced code block, the called function must
+ * be one of the declared tools, and the whole fallback turns off once the provider
+ * returns any native `tool_calls`.
+ *
+ * A buffered call is released in one piece once closed, so unlike native tool calls its
+ * arguments do not stream into the UI while the model is still writing them.
+ */
+
+const OPEN_TAG = '<tool_call>';
+const CLOSE_TAG = '</tool_call>';
+const FENCE_LINE = /^\s*(?:```|~~~)/;
+const XML_FUNCTION = /^<function=([^\s>]+)>([\s\S]*?)<\/function>\s*$/;
+// Non-greedy like vLLM's qwen3_coder parser: a literal `</parameter>` inside a value
+// ends that value early.
+const XML_PARAMETER = /<parameter=([^\s>]+)>([\s\S]*?)<\/parameter>/g;
+
+const log = debug('lobe-model-runtime:text-tool-calls');
+
+export const TEXT_TOOL_CALL_FALLBACK_DISABLED_ENV = 'DISABLE_TEXT_TOOL_CALL_FALLBACK';
+
+export const isTextToolCallFallbackDisabled = () =>
+  typeof process !== 'undefined' && process.env?.[TEXT_TOOL_CALL_FALLBACK_DISABLED_ENV] === '1';
+
+export interface ParsedTextToolCall {
+  arguments: string;
+  name: string;
+}
+
+type ToolSchemas = Map<string, ChatCompletionTool['function']['parameters']>;
+
+const stripEdgeNewline = (value: string) => value.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+
+const isStringSchema = (schema: any) => {
+  const type = schema?.type;
+  return type === 'string' || (Array.isArray(type) && type.every((t) => t === 'string'));
+};
+
+const convertParameterValue = (raw: string, schema: any): unknown => {
+  const value = stripEdgeNewline(raw);
+  if (isStringSchema(schema)) return value;
+
+  const trimmed = value.trim();
+  // Without a declared type only structured JSON is decoded, so "123" stays a string.
+  if (!schema && !/^[[{]/.test(trimmed)) return value;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
+/**
+ * Parse the body between `<tool_call>` and `</tool_call>`. Returns `undefined` when
+ * the body is neither the XML nor the JSON protocol, or names an undeclared tool.
+ */
+export const parseTextToolCallBody = (
+  body: string,
+  schemas: ToolSchemas,
+): ParsedTextToolCall | undefined => {
+  const content = body.trim();
+
+  const xml = content.match(XML_FUNCTION);
+  if (xml) {
+    const [, name, paramsBlock] = xml;
+    if (!schemas.has(name)) return;
+
+    const properties = (schemas.get(name) as any)?.properties;
+    const args: Record<string, unknown> = {};
+    for (const [, key, value] of paramsBlock.matchAll(XML_PARAMETER)) {
+      args[key] = convertParameterValue(value, properties?.[key]);
+    }
+
+    return { arguments: JSON.stringify(args), name };
+  }
+
+  if (content.startsWith('{')) {
+    const json = safeParseJSON<{ arguments?: unknown; name?: unknown; parameters?: unknown }>(
+      content,
+    );
+    if (!json || typeof json.name !== 'string' || !schemas.has(json.name)) return;
+
+    const args = json.arguments ?? json.parameters ?? {};
+
+    return {
+      arguments: typeof args === 'string' ? args : JSON.stringify(args),
+      name: json.name,
+    };
+  }
+};
+
+const looksLikeToolCall = (body: string) => {
+  const content = body.trimStart();
+  return content.startsWith('<function=') || content.startsWith('{');
+};
+
+export const createTextToolCallTransformer = (tools?: ChatCompletionTool[]) => {
+  const schemas: ToolSchemas = new Map(
+    (tools ?? [])
+      .filter((tool) => tool?.function?.name)
+      .map((tool) => [tool.function.name, tool.function.parameters]),
+  );
+
+  // Not applicable: pass every chunk through untouched.
+  if (schemas.size === 0) return new TransformStream<StreamProtocolChunk, StreamProtocolChunk>();
+
+  let disabled = false;
+  let pending = '';
+  let inToolCall = false;
+  let toolCallBody = '';
+  // Emitted text since the last newline, plus fenced-code state, decide whether an
+  // opening tag may start here.
+  let currentLine = '';
+  let inFence = false;
+  let toolIndex = 0;
+  let lastId = '';
+
+  type Controller = TransformStreamDefaultController<StreamProtocolChunk>;
+
+  // Native calls after converted ones must not reuse their indexes, or their argument
+  // deltas would merge into the converted calls.
+  const shiftNativeIndexes = (chunk: StreamProtocolChunk): StreamProtocolChunk =>
+    chunk.type === 'tool_calls' && toolIndex > 0
+      ? {
+          ...chunk,
+          data: (chunk.data as StreamToolCallChunkData[]).map((item) => ({
+            ...item,
+            index: item.index + toolIndex,
+          })),
+        }
+      : chunk;
+
+  const emitText = (controller: Controller, text: string) => {
+    if (!text) return;
+    controller.enqueue({ data: text, id: lastId, type: 'text' });
+
+    const lines = text.split('\n');
+    for (const line of lines.slice(0, -1)) {
+      if (FENCE_LINE.test(currentLine + line)) inFence = !inFence;
+      currentLine = '';
+    }
+    currentLine += lines.at(-1)!;
+  };
+
+  const emitToolCall = (controller: Controller, call: ParsedTextToolCall) => {
+    const data: StreamToolCallChunkData[] = [
+      {
+        function: { arguments: call.arguments, name: call.name },
+        id: generateToolCallId(toolIndex, call.name),
+        index: toolIndex,
+        type: 'function',
+      },
+    ];
+    toolIndex += 1;
+    currentLine = '';
+    log('converted text tool call %s', call.name);
+    controller.enqueue({ data, id: lastId, type: 'tool_calls' });
+  };
+
+  const settleToolCall = (controller: Controller, body: string, closed: boolean) => {
+    const call = parseTextToolCallBody(body, schemas);
+    if (call) return emitToolCall(controller, call);
+
+    emitText(controller, OPEN_TAG + body + (closed ? CLOSE_TAG : ''));
+    log('restored a %s <tool_call> block as text', closed ? 'non-matching' : 'unclosed');
+
+    if (!closed && looksLikeToolCall(body)) {
+      controller.enqueue({
+        data: {
+          body: { name: 'TextToolCallParseError', reason: 'unclosed_tool_call' },
+          message:
+            'The model output an unclosed <tool_call> block, so the tool call could not be executed. Check that the inference server is configured with a tool-call parser for this model.',
+          name: 'TextToolCallParseError',
+          type: AgentRuntimeErrorType.StreamChunkError,
+        },
+        id: lastId,
+        type: 'error',
+      });
+    }
+  };
+
+  /** Move as much of `pending` out as can be decided without more input. */
+  const drain = (controller: Controller, final: boolean) => {
+    while (pending) {
+      if (inToolCall) {
+        // Only the new text, plus a tag split across chunks, can hold the closing tag.
+        const searchFrom = Math.max(0, toolCallBody.length - CLOSE_TAG.length + 1);
+        toolCallBody += pending;
+        pending = '';
+
+        const closeIndex = toolCallBody.indexOf(CLOSE_TAG, searchFrom);
+        if (closeIndex === -1) break;
+
+        pending = toolCallBody.slice(closeIndex + CLOSE_TAG.length);
+        const body = toolCallBody.slice(0, closeIndex);
+        inToolCall = false;
+        toolCallBody = '';
+        settleToolCall(controller, body, true);
+        continue;
+      }
+
+      const newlineIndex = pending.indexOf('\n');
+      const untilNextLine = newlineIndex === -1 ? pending : pending.slice(0, newlineIndex + 1);
+
+      // An opening tag can only start a line outside fenced code.
+      if (inFence || currentLine.trim()) {
+        emitText(controller, untilNextLine);
+        pending = pending.slice(untilNextLine.length);
+        continue;
+      }
+
+      const indent = pending.match(/^[\t ]*/)![0];
+      const rest = pending.slice(indent.length);
+
+      if (rest.startsWith(OPEN_TAG)) {
+        emitText(controller, indent);
+        pending = rest.slice(OPEN_TAG.length);
+        inToolCall = true;
+        continue;
+      }
+
+      // Possibly the start of an opening tag split across chunks: wait for more.
+      if (OPEN_TAG.startsWith(rest) && !final) break;
+
+      emitText(controller, untilNextLine);
+      pending = pending.slice(untilNextLine.length);
+    }
+
+    if (final && inToolCall) {
+      const body = toolCallBody;
+      inToolCall = false;
+      toolCallBody = '';
+      // A complete function block missing only its closing tag is still executable.
+      settleToolCall(controller, body, false);
+    }
+  };
+
+  return new TransformStream<StreamProtocolChunk, StreamProtocolChunk>({
+    flush(controller) {
+      drain(controller, true);
+    },
+    transform(chunk, controller) {
+      if (chunk.id) lastId = chunk.id;
+
+      if (disabled) return controller.enqueue(shiftNativeIndexes(chunk));
+
+      if (chunk.type === 'text' && typeof chunk.data === 'string') {
+        pending += chunk.data;
+        return drain(controller, false);
+      }
+
+      if (chunk.type === 'tool_calls') {
+        // The provider speaks native tool calls: restore anything held back as text.
+        disabled = true;
+        if (inToolCall) {
+          pending = OPEN_TAG + toolCallBody + pending;
+          inToolCall = false;
+          toolCallBody = '';
+        }
+        emitText(controller, pending);
+        pending = '';
+        return controller.enqueue(shiftNativeIndexes(chunk));
+      }
+
+      if (chunk.type === 'stop') drain(controller, true);
+
+      controller.enqueue(chunk);
+    },
+  });
+};
