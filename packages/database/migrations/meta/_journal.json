@@ -1337,6 +1337,13 @@
       "when": 1793084535893,
       "tag": "0190_channel_status",
       "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1793090755557,
+      "tag": "0191_user_favorites",
+      "breakpoints": true
     }
   ],
   "version": "6"
