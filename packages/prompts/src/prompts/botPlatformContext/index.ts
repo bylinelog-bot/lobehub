@@ -50,6 +50,11 @@ export interface BotPlatformInfo {
   canReadHistory?: boolean;
   /** Identifiers of the conversation this run is replying in. */
   currentChannel?: CurrentBotChannel;
+  /**
+   * The short acknowledgement already posted to the user before this run started ("Got it, I'll
+   * check the logs first"). The agent continues from it instead of acknowledging again.
+   */
+  openingReply?: string;
   platformName: string;
   /**
    * The bot woke on its own to offer its owner help nobody asked for (a `followup` wake). The agent
@@ -88,6 +93,7 @@ const sanitize = (text: string) =>
 export const formatBotPlatformContext = ({
   canReadHistory = true,
   currentChannel,
+  openingReply,
   platformName,
   proactive,
   recentChannelHistory,
@@ -151,6 +157,17 @@ export const formatBotPlatformContext = ({
       'NEVER ask the user for a chat / channel / group ID, and never call `listChannels` to look up the current one — it is right here.',
       'When a `lobe-message` send targets this conversation, omit `botId` / `messengerInstallationId` — the runtime already knows which connection this conversation uses.',
       '</current_conversation>',
+    );
+  }
+
+  if (openingReply?.trim()) {
+    lines.push(
+      '',
+      '<opening_reply>',
+      'You already posted this acknowledgement to the user, before starting:',
+      `"${sanitize(openingReply.trim())}"`,
+      'Do not acknowledge again or repeat it. Do the work it announced and reply with the result.',
+      '</opening_reply>',
     );
   }
 

@@ -12,6 +12,8 @@ export interface BotPlatformContext {
   canReadHistory?: boolean;
   /** Identifiers of the conversation this run replies in (`lobe-message` args). */
   currentChannel?: BotPlatformInfo['currentChannel'];
+  /** Acknowledgement already posted before the run (see `formatBotPlatformContext`). */
+  openingReply?: BotPlatformInfo['openingReply'];
   platformName: string;
   /** The bot woke on its own to offer its owner help (see `formatBotPlatformContext`). */
   proactive?: boolean;
