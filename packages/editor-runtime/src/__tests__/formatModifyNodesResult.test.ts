@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatModifyNodesResult } from '../formatModifyNodesResult';
+import { formatModifyNodesResult, PENDING_REVIEW_NOTE } from '../formatModifyNodesResult';
 
 describe('formatModifyNodesResult', () => {
   it('summarises a fully applied batch', () => {
@@ -50,5 +50,42 @@ describe('formatModifyNodesResult', () => {
 
     expect(content).toContain('except those marked PARTIALLY APPLIED');
     expect(content).toContain('- Operation 1 (modify): PARTIALLY APPLIED');
+  });
+
+  it('says the edits are not live when the editor keeps them as review diffs', () => {
+    const content = formatModifyNodesResult(
+      {
+        results: [{ action: 'insert', success: true }],
+        successCount: 1,
+        totalCount: 1,
+      },
+      { pendingReview: true },
+    );
+
+    expect(content).toContain('Successfully executed 1 insert');
+    expect(content).toContain(PENDING_REVIEW_NOTE);
+  });
+
+  it('stays silent about review diffs when every operation failed', () => {
+    const content = formatModifyNodesResult(
+      {
+        results: [{ action: 'remove', error: 'node "zzzz" not found', success: false }],
+        successCount: 0,
+        totalCount: 1,
+      },
+      { pendingReview: true },
+    );
+
+    expect(content).not.toContain(PENDING_REVIEW_NOTE);
+  });
+
+  it('keeps the previous wording when the host applies edits directly', () => {
+    const content = formatModifyNodesResult({
+      results: [{ action: 'insert', success: true }],
+      successCount: 1,
+      totalCount: 1,
+    });
+
+    expect(content).not.toContain('review diff');
   });
 });

@@ -6,7 +6,7 @@ import type {
   ModifyNodesArgs,
   ReplaceTextArgs,
 } from '@lobechat/editor-runtime';
-import { formatModifyNodesResult } from '@lobechat/editor-runtime';
+import { formatModifyNodesResult, PENDING_REVIEW_NOTE } from '@lobechat/editor-runtime';
 import type { BuiltinToolResult, ToolAfterCallContext } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
 import debug from 'debug';
@@ -323,9 +323,12 @@ class PageAgentExecutor extends BaseExecutor<typeof PageAgentApiName> {
     try {
       const result = await this.runtime.modifyNodes(params);
 
-      const content = formatModifyNodesResult(result);
+      // The live editor keeps AI edits as review diffs until the user accepts them,
+      // so the model must not report them as already applied.
+      const content = formatModifyNodesResult(result, { pendingReview: true });
 
       const state: ModifyNodesState = {
+        pendingReview: result.successCount > 0,
         results: result.results,
         successCount: result.successCount,
         totalCount: result.totalCount,
@@ -379,11 +382,12 @@ class PageAgentExecutor extends BaseExecutor<typeof PageAgentApiName> {
 
       const content =
         result.replacementCount > 0
-          ? `Successfully replaced ${result.replacementCount} occurrence(s) of "${params.searchText}" with "${params.newText}" ${scopeDescription}. Modified ${result.modifiedNodeIds.length} node(s).`
+          ? `Successfully replaced ${result.replacementCount} occurrence(s) of "${params.searchText}" with "${params.newText}" ${scopeDescription}. Modified ${result.modifiedNodeIds.length} node(s).\n${PENDING_REVIEW_NOTE}`
           : `No occurrences of "${params.searchText}" found ${scopeDescription}.`;
 
       const state: ReplaceTextState = {
         modifiedNodeIds: result.modifiedNodeIds,
+        pendingReview: result.replacementCount > 0,
         replacementCount: result.replacementCount,
       };
 

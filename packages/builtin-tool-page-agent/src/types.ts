@@ -35,6 +35,8 @@ export interface GetPageContentState {
 }
 
 export interface ModifyNodesState {
+  /** Whether the edits are review diffs that only apply after the user accepts them. */
+  pendingReview?: boolean;
   results: Array<{
     action: 'insert' | 'remove' | 'modify';
     error?: string;
@@ -45,6 +47,8 @@ export interface ModifyNodesState {
 }
 
 export interface ReplaceTextState {
+  /** Whether the replacements are review diffs that only apply after the user accepts them. */
+  pendingReview?: boolean;
   /** IDs of nodes that were modified */
   modifiedNodeIds: string[];
   /** Number of replacements made */
