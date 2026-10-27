@@ -12,7 +12,7 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { AgentQuotaService } from '@/server/services/agentQuota';
 import { deviceGateway } from '@/server/services/deviceGateway';
 
-import { assertWorkspaceDeviceVisible } from './deviceWorkspaceGuard';
+import { assertDeviceOperable } from './device/guards';
 
 const quotaProcedure = authedProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
@@ -56,7 +56,7 @@ export const agentQuotaRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      if (ctx.workspaceId) await assertWorkspaceDeviceVisible(ctx.deviceModel, input.deviceId);
+      await assertDeviceOperable(ctx, input.deviceId, 'read agent credentials on');
       const snapshot = await deviceGateway.codexQuota({
         ...input,
         userId: ctx.userId,
@@ -108,7 +108,7 @@ export const agentQuotaRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      if (ctx.workspaceId) await assertWorkspaceDeviceVisible(ctx.deviceModel, input.deviceId);
+      await assertDeviceOperable(ctx, input.deviceId, 'read agent credentials on');
       const snapshot = await deviceGateway.kimiCodeQuota({
         ...input,
         userId: ctx.userId,
