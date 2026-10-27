@@ -42,7 +42,9 @@ export interface ShellSegment {
   trailingSlashTargets: string[];
 
   /**
-   * Words after stripping redirections, respecting quotes.
+   * Words after stripping redirections, respecting quotes, with brace
+   * alternatives expanded the way Bash expands them before exec — these are
+   * the words the shell would present as argv.
    * Quoted strings are kept as single words with quotes removed.
    */
   words: string[];
@@ -333,6 +335,18 @@ const splitIntoRawSegments = (command: string): string[] => {
     // Backslash-newline outside quotes is a line continuation: the shell
     // removes it (`rm -rf \<newline>/` deletes '/') — never a separator.
     if (char === '\\' && (PREPARED[i + 1] === '\n' || PREPARED[i + 1] === '\r')) {
+      i++;
+      continue;
+    }
+
+    // Any other backslash outside quotes escapes the NEXT character: `\"` is a
+    // literal double quote and `\;` a literal semicolon, so neither quote nor
+    // operator state may be entered here. Without this, `echo \"; rm -rf ~`
+    // opens a phantom double-quoted region at the escaped quote, the real `rm`
+    // command is absorbed into the `echo` segment, and every predicate misses
+    // it. Consume the pair so the escaped character is never reinterpreted.
+    if (char === '\\' && i + 1 < PREPARED.length) {
+      current += char + PREPARED[i + 1];
       i++;
       continue;
     }
@@ -761,16 +775,18 @@ const isBareSlash = (word: string): boolean => word === '/';
 const collectFlags = (words: string[]): string[] => words.filter(isDashWord);
 
 /**
- * Brace-expand a flag word the way Bash does before the word reaches argv:
- * `rm -r{f,} /` really runs `rm -rf -r /`, so the generated `r` must be
- * visible to flag classification. A brace group with no top-level comma
- * (`-r{x}`) is literal in Bash and stays untouched.
+ * Brace-expand a word the way Bash does before the word reaches argv:
+ * `rm -r{f,} /` really runs `rm -rf -r /`, and `{rm,echo} -rf ~` runs
+ * `rm echo -rf <home>` — the generated words must be visible to command,
+ * flag and target classification. A brace group with no top-level comma
+ * (`-r{x}`) is literal in Bash and stays untouched, and parameter expansions
+ * (`${A:-x,y}`) are not brace-expanded at all.
  *
  * Bounded on both axes (nesting depth and total variants) and falls back to
  * the unexpanded word when a shape exceeds them — an unexpanded token only
  * costs detection, never correctness of the parser.
  */
-const expandFlagBraceAlternatives = (word: string, depth = 0): string[] => {
+const expandBraceAlternatives = (word: string, depth = 0): string[] => {
   if (depth > 4 || !word.includes('{')) return [word];
 
   const open = word.indexOf('{');
@@ -807,7 +823,7 @@ const expandFlagBraceAlternatives = (word: string, depth = 0): string[] => {
   }
   members.push(buffer);
 
-  const tails = expandFlagBraceAlternatives(suffix, depth + 1);
+  const tails = expandBraceAlternatives(suffix, depth + 1);
   if (members.length < 2) {
     // `{x}` is literal, but a later brace in the same word may still expand:
     // keep this group as-is and expand only the tail.
@@ -838,7 +854,7 @@ export const collectFlagLettersAndNames = (
   const letters = new Set<string>();
   const names = new Set<string>();
   for (const flag of flags) {
-    for (const variant of expandFlagBraceAlternatives(flag)) {
+    for (const variant of expandBraceAlternatives(flag)) {
       // Long flag: --name or --name=value → register both the name and, for
       // security conservatism, its first letter (rm -R / -r alias semantic).
       const longMatch = /^--([^=]+)(?:=.*)?$/.exec(variant);
@@ -1059,7 +1075,17 @@ export const analyzeShellCommand = (command: string): ShellSegment[] => {
 
   const rawSegments = splitIntoRawSegments(command);
   return rawSegments.map((rawSegment) => {
-    const words = tokenizeWords(rawSegment);
+    const tokens = tokenizeWords(rawSegment);
+
+    // Bash brace-expands every word before it resolves argv, so the literal
+    // token is NOT what runs: `{rm,echo} -rf ~` executes `rm echo -rf <home>`.
+    // Expanding here — rather than only inside flag classification — puts the
+    // generated words in the argv view the predicates read, so a brace group
+    // in the command position cannot hide the real executable. Parameter
+    // expansions (`${A:-x,y}`) are skipped: Bash does not brace-expand them.
+    const words = tokens.flatMap((word) =>
+      word.includes('${') ? [word] : expandBraceAlternatives(word),
+    );
 
     // Words eligible for command resolution: everything before the first
     // non-flag, non-argument word matters; we keep it simple: resolution uses

@@ -48,6 +48,23 @@ describe('analyzeShellCommand', () => {
       const segments = analyzeShellCommand("echo 'a; b");
       expect(segments.length).toBeGreaterThan(0);
     });
+
+    it('keeps an escaped quote literal so the following separator still splits', () => {
+      // `\"` is an argument to echo, not a quote opener: the `;` after it
+      // starts a real second command. Entering quote state here swallows
+      // `rm -rf ~` into the echo segment and hides it from every predicate.
+      const segments = analyzeShellCommand('echo \\"; rm -rf ~');
+      expect(segments).toHaveLength(2);
+      expect(segments[0].words).toEqual(['echo', '"']);
+      expect(segments[1].resolvedCommand).toBe('rm');
+      expect(segments[1].homeTargets).toEqual(['~']);
+    });
+
+    it('does not split on an escaped separator', () => {
+      const segments = analyzeShellCommand('echo x\\; rm -rf ~');
+      expect(segments).toHaveLength(1);
+      expect(segments[0].resolvedCommand).toBe('echo');
+    });
   });
 
   describe('redirection stripping', () => {
@@ -75,6 +92,31 @@ describe('analyzeShellCommand', () => {
       // A redirection-looking string inside a quoted word must survive
       const segments = analyzeShellCommand("echo 'a > b' | cat");
       expect(segments[0].words).toEqual(['echo', 'a > b']);
+    });
+  });
+
+  describe('brace expansion', () => {
+    it('expands a brace group in command position into argv words', () => {
+      // Bash expands before exec: `{rm,echo} -rf ~` runs `rm echo -rf <home>`,
+      // so argv[0] is rm and the recursive home delete is real.
+      const [segment] = analyzeShellCommand('{rm,echo} -rf ~');
+      expect(segment.words).toEqual(['rm', 'echo', '-rf', '~']);
+      expect(segment.resolvedCommand).toBe('rm');
+      expect(segment.hasFlag('r')).toBe(true);
+      expect(segment.homeTargets).toEqual(['~']);
+    });
+
+    it('expands brace flags exactly as before', () => {
+      const [segment] = analyzeShellCommand('rm -r{f,} /');
+      expect(segment.words).toEqual(['rm', '-rf', '-r', '/']);
+      expect(segment.hasFlag('r')).toBe(true);
+      expect(segment.trailingSlashTargets).toEqual(['/']);
+    });
+
+    it('leaves parameter expansions unexpanded', () => {
+      // Bash does not brace-expand a `${…}` body, even when it contains a comma.
+      const [segment] = analyzeShellCommand('rm -rf ${D:-a,b}');
+      expect(segment.words).toEqual(['rm', '-rf', '${D:-a,b}']);
     });
   });
 

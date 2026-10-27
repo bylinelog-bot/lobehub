@@ -96,6 +96,15 @@ describe('matchSemanticShellPredicate', () => {
       'rm -rf /home/bob',
       "rm '-r' ~",
       'echo x; rm -rf ~/',
+      // Leading descriptor duplication is a redirection, not a `&` separator:
+      // splitting on it used to leave the bogus command `1`.
+      '2>&1 rm -rf ~',
+      // Escaped quote: `\"` is a literal argument, so the `;` after it starts a
+      // real command. Treating it as a quote opener hid the rm.
+      'echo \\"; rm -rf ~',
+      // Brace expansion decides argv[0]: this runs `rm echo -rf <home>`.
+      '{rm,echo} -rf ~',
+      '{rm,true} -r ~/',
       // Forwarding function: the call passes the home target to rm.
       'zap(){ rm -rf "$@"; }; zap ~',
       'zap(){ rm "$@"; }; zap -r ~/',
@@ -117,6 +126,10 @@ describe('matchSemanticShellPredicate', () => {
       'du -sh /Users/arvinxx/',
       'grep -r pattern /Users/arvinxx/notes',
       'cat ~/.zshrc',
+      // Brace expansion puts `echo` in argv[0]; rm only receives arguments.
+      '{echo,rm} -rf ~',
+      // An escaped `;` is literal text, not a command separator: rm never runs.
+      'echo x\\; rm -rf ~',
     ])('allows: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
     });
