@@ -1,0 +1,23 @@
+-- Partial expression index for the heterogeneous-operation message lookups.
+--
+-- `models/message/plugin.ts` (listMessagePluginsForOperation) and
+-- `models/message/tool.ts` resolve a CLI operation's messages with
+-- `metadata->>'heterogeneousToolStateOperationId' = $1`. Without a matching
+-- expression index that predicate has no usable access path, so every call
+-- scans `messages` — the table is ~34M rows / tens of GB on Cloud, and the
+-- scan cost lands on the same database that serves the whole app.
+--
+-- The predicate below only covers rows that actually carry the key (CLI-backed
+-- runs), so the index stays small relative to the table.
+--
+-- On cloud production this index must be built online before deploy:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS "messages_hetero_tool_state_op_idx"
+--   ON "messages" USING btree ((("metadata"->>'heterogeneousToolStateOperationId')))
+--   WHERE ("metadata"->>'heterogeneousToolStateOperationId') IS NOT NULL;
+--
+-- The guarded statement below is then a NO-OP on databases that already have
+-- the index, while fresh / self-hosted databases still converge to the target
+-- schema during normal migration replay. Keep it non-CONCURRENTLY so local
+-- PGlite / normal migration replay remains compatible.
+CREATE INDEX IF NOT EXISTS "messages_hetero_tool_state_op_idx" ON "messages" USING btree ((("metadata"->>'heterogeneousToolStateOperationId'))) WHERE ("metadata"->>'heterogeneousToolStateOperationId') IS NOT NULL;

@@ -173,6 +173,20 @@ export const messages = pgTable(
     index('messages_usage_cost_idx').on(sql`(("usage"->>'cost')::numeric)`),
     index('messages_usage_total_tokens_idx').on(sql`(("usage"->>'totalTokens')::numeric)`),
     index('messages_workspace_id_idx').on(table.workspaceId),
+    /**
+     * Serves the heterogeneous-operation lookups in
+     * `models/message/plugin.ts` (`listMessagePluginsForOperation`) and
+     * `models/message/tool.ts`, which resolve messages by
+     * `metadata->>'heterogeneousToolStateOperationId'`.
+     *
+     * Only CLI-backed runs stamp that key, so the partial predicate keeps the
+     * index down to the stamped rows instead of carrying all 30M+ `messages`
+     * rows — the planner then has a single-table index scan to use instead of
+     * falling back to a sequential scan of the table for every call.
+     */
+    index('messages_hetero_tool_state_op_idx')
+      .on(sql`(("metadata"->>'heterogeneousToolStateOperationId'))`)
+      .where(sql`("metadata"->>'heterogeneousToolStateOperationId') IS NOT NULL`),
   ],
 );
 
