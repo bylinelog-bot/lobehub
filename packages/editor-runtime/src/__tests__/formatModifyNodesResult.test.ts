@@ -55,7 +55,7 @@ describe('formatModifyNodesResult', () => {
   it('says the edits are not live when the editor keeps them as review diffs', () => {
     const content = formatModifyNodesResult(
       {
-        results: [{ action: 'insert', success: true }],
+        results: [{ action: 'insert', pendingReview: true, success: true }],
         successCount: 1,
         totalCount: 1,
       },
@@ -77,6 +77,37 @@ describe('formatModifyNodesResult', () => {
     );
 
     expect(content).not.toContain(PENDING_REVIEW_NOTE);
+  });
+
+  it('does not claim a review diff for operations the editor applied directly', () => {
+    const content = formatModifyNodesResult(
+      {
+        // list edits bypass the review diff and are live immediately
+        results: [{ action: 'insert', pendingReview: false, success: true }],
+        successCount: 1,
+        totalCount: 1,
+      },
+      { pendingReview: true },
+    );
+
+    expect(content).toBe('Successfully executed 1 insert (1/1 operations succeeded).');
+  });
+
+  it('separates the operations that are diffs from the ones already written', () => {
+    const content = formatModifyNodesResult(
+      {
+        results: [
+          { action: 'modify', pendingReview: true, success: true },
+          { action: 'insert', pendingReview: false, success: true },
+        ],
+        successCount: 2,
+        totalCount: 2,
+      },
+      { pendingReview: true },
+    );
+
+    expect(content).toContain('1 of 2 applied operations are review diffs and are NOT live yet');
+    expect(content).toContain(PENDING_REVIEW_NOTE);
   });
 
   it('keeps the previous wording when the host applies edits directly', () => {

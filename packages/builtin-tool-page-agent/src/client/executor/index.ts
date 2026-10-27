@@ -323,12 +323,17 @@ class PageAgentExecutor extends BaseExecutor<typeof PageAgentApiName> {
     try {
       const result = await this.runtime.modifyNodes(params);
 
-      // The live editor keeps AI edits as review diffs until the user accepts them,
-      // so the model must not report them as already applied.
+      // The live editor keeps block-level AI edits as review diffs until the user
+      // accepts them, while list/table edits are written straight to the page.
+      // `formatModifyNodesResult` reads the per-operation flag, so the message
+      // only claims "not live" for the operations that really are diffs.
       const content = formatModifyNodesResult(result, { pendingReview: true });
+      const pendingReview = result.results.some(
+        (operation) => operation.success && operation.pendingReview,
+      );
 
       const state: ModifyNodesState = {
-        pendingReview: result.successCount > 0,
+        pendingReview,
         results: result.results,
         successCount: result.successCount,
         totalCount: result.totalCount,

@@ -11,7 +11,11 @@ export const PENDING_REVIEW_NOTE =
   'These edits are review diffs: they are NOT live yet. The page keeps showing the old content until the user accepts them, and the user may reject them instead. Describe them as proposed changes waiting for acceptance — never say the page has been updated, and do not assume a later operation can build on them as if they were applied.';
 
 export interface FormatModifyNodesOptions {
-  /** Whether the host editor renders these edits as review diffs. */
+  /**
+   * Whether the host renders pending edits as review diffs at all. The server
+   * runtime writes straight to the document and passes nothing; the live
+   * editor passes true so the per-operation `pendingReview` flags are reported.
+   */
   pendingReview?: boolean;
 }
 
@@ -34,7 +38,16 @@ export const formatModifyNodesResult = (
     .map(([action, count]) => `${count} ${action}${count > 1 ? 's' : ''}`)
     .join(', ');
 
-  const reviewNote = options.pendingReview && successCount > 0 ? PENDING_REVIEW_NOTE : '';
+  // Only operations the editor actually kept as a diff are pending; list and
+  // table edits are written directly and are live immediately.
+  const pendingResults = results.filter((result) => result.success && result.pendingReview);
+  const pendingCount = pendingResults.length;
+  const reviewNote =
+    options.pendingReview && pendingCount > 0
+      ? pendingCount === successCount
+        ? PENDING_REVIEW_NOTE
+        : `${pendingCount} of ${successCount} applied operations are review diffs and are NOT live yet; the rest were written to the page directly. ${PENDING_REVIEW_NOTE}`
+      : '';
 
   if (successCount === totalCount) {
     return [

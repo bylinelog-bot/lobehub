@@ -40,6 +40,8 @@ export interface ModifyNodesState {
   results: Array<{
     action: 'insert' | 'remove' | 'modify';
     error?: string;
+    /** Whether this operation landed as a pending review diff. */
+    pendingReview?: boolean;
     success: boolean;
   }>;
   successCount: number;
