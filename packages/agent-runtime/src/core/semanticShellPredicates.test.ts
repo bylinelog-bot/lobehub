@@ -23,6 +23,16 @@ describe('matchSemanticShellPredicate', () => {
       // Root glob: `/*` expands to the whole root subtree.
       'rm -rf /*',
       'rm -rf /**',
+      // Brace-generated flags: the shell expands `-r{f,}` into `-rf` and `-r`
+      // before exec, so the literal token must not hide the recursive flag.
+      'rm -r{f,} /',
+      'rm -r{,f} /',
+      'rm -{r,}f /',
+      // Shell functions that forward argv into rm: the call is the real rm.
+      'zap(){ rm "$@"; }; zap -rf /',
+      'zap() { rm "$@"; } && zap -rf /',
+      'function zap { rm "$@"; }; zap -rf /',
+      'zap(){ rm -rf "$@"; }; zap /',
     ])('blocks: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
     });
@@ -50,6 +60,14 @@ describe('matchSemanticShellPredicate', () => {
       // A root glob that names a real segment is a subset delete, not the root.
       'rm -rf /*.log',
       'rm -rf /tmp/*',
+      // Brace-generated flags stay a subset delete when the target is scoped.
+      'rm -r{f,} /tmp/build-cache',
+      // A forwarding function that never forwards argv into rm is not an rm.
+      'zap(){ echo hi; }; zap -rf /',
+      // Forwarding into rm, but the target is a scoped path.
+      'zap(){ rm "$@"; }; zap -rf /tmp/build-cache',
+      // No recursive flag from either the body or the call.
+      'zap(){ rm "$@"; }; zap /',
       // Unknown predicate must never match (forward compatibility).
     ])('allows: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
@@ -78,6 +96,9 @@ describe('matchSemanticShellPredicate', () => {
       'rm -rf /home/bob',
       "rm '-r' ~",
       'echo x; rm -rf ~/',
+      // Forwarding function: the call passes the home target to rm.
+      'zap(){ rm -rf "$@"; }; zap ~',
+      'zap(){ rm "$@"; }; zap -r ~/',
     ])('blocks: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(true);
     });
@@ -89,6 +110,8 @@ describe('matchSemanticShellPredicate', () => {
       'rm -r ~/.config/some-app',
       'rm -rf /Users/alice/projects/sandbox',
       'rm -rf /home/bob/tmp/build',
+      // Forwarding function whose target stays inside the home tree.
+      'zap(){ rm -rf "$@"; }; zap ~/notes/old',
       // Not rm at all.
       'ls ~',
       'du -sh /Users/arvinxx/',

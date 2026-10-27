@@ -291,6 +291,112 @@ const AMBIGUOUS_COMMAND_HINTS = new Set([
   'runuser',
 ]);
 
+/** A token that forwards the caller's whole argv into the callee's argv. */
+const ARG_FORWARD_PATTERN = /^\$(?:@|\*|\{@\}|\{\*\})$/;
+
+/** A forwarding shell function whose body forwards argv into `rm`. */
+interface ForwardingRmFunction {
+  /** The body itself carries a force flag (`rm -rf "$@"`). */
+  force: boolean;
+  /** The body itself carries a recursive flag (`rm -rf "$@"`). */
+  recursive: boolean;
+}
+
+/**
+ * Parse a Bash function definition head (`zap(){ … }`, `zap() { … }`,
+ * `function zap { … }`, `function zap() { … }`) into its name and body words.
+ * Returns null when the segment is not a definition.
+ */
+const parseFunctionDefinition = (
+  words: string[],
+): { body: string[]; name: string } | null => {
+  const [first] = words;
+  if (!first) return null;
+
+  if (first === 'function') {
+    const name = (words[1] ?? '').replace(/\(\s*\)$/, '');
+    if (!/^[a-z_][\w-]*$/i.test(name)) return null;
+    return { body: words.slice(words[2] === '{' ? 3 : 2), name };
+  }
+
+  const withParens = /^([a-z_][\w-]*)\s*\(\s*\)\s*\{?$/i.exec(first);
+  if (withParens) {
+    const name = withParens[1];
+    if (first.endsWith('{')) return { body: words.slice(1), name };
+    return words[1] === '{' ? { body: words.slice(2), name } : null;
+  }
+
+  // Whitespace between the name and `()` (`zap () { … }`) tokenizes them apart.
+  if (/^[a-z_][\w-]*$/i.test(first)) {
+    let index = 1;
+    if (words[index] === '()') index++;
+    if (words[index] === '{') return { body: words.slice(index + 1), name: first };
+  }
+
+  return null;
+};
+
+/**
+ * Shell functions that forward the caller's argv into `rm` (`zap(){ rm "$@"; }`).
+ *
+ * Calling such a function (`zap -rf /`) deletes root exactly like `rm -rf /`,
+ * but the definition and the invocation are separate segments and the
+ * invocation resolves to the FUNCTION name, not `rm` — the precise predicates
+ * and the ambiguity fallback both skip it. The flags may sit in either place
+ * (`rm -rf "$@"` vs `zap -rf /`), so both are collected.
+ */
+const collectForwardingRmFunctions = (
+  segments: ShellSegment[],
+): Map<string, ForwardingRmFunction> => {
+  const functions = new Map<string, ForwardingRmFunction>();
+  for (const segment of segments) {
+    const definition = parseFunctionDefinition(segment.words);
+    if (!definition) continue;
+    const { body, name } = definition;
+    const rmIndex = body.findIndex((word) => word === 'rm' || /\/rm$/.test(word));
+    if (rmIndex < 0) continue;
+    // Only argv-forwarding bodies receive the caller's target and flags; a
+    // body that names its own target (`rm -rf /tmp/x "$@"`) is not covered
+    // here and stays with the precise predicates on its own segment.
+    if (!body.slice(rmIndex + 1).some((word) => ARG_FORWARD_PATTERN.test(word))) continue;
+    const { letters, names } = collectFlagLettersAndNames(
+      body.slice(rmIndex + 1).filter((word) => word.startsWith('-') && word.length > 1),
+    );
+    functions.set(name, {
+      force: letters.has('f') || names.has('force'),
+      recursive: letters.has('r') || letters.has('R') || names.has('recursive'),
+    });
+  }
+  return functions;
+};
+
+/**
+ * True when the segment invokes a forwarding function as if it were `rm`:
+ * recursive flag (from the call, the body, or both) plus a target from the
+ * REQUESTED predicate's family. Honours the predicate contract exactly like
+ * the precise resolvers, including the force requirement of the dot rule.
+ */
+const matchesForwardingRmFunction = (
+  segment: ShellSegment,
+  predicate: SemanticShellPredicate,
+  functions: Map<string, ForwardingRmFunction>,
+): boolean => {
+  const functionName = segment.resolvedCommand;
+  if (!functionName) return false;
+  const body = functions.get(functionName);
+  if (!body) return false;
+
+  const { letters, names } = collectFlagLettersAndNames(segment.flags);
+  const recursive =
+    body.recursive || letters.has('r') || letters.has('R') || names.has('recursive');
+  if (!recursive) return false;
+
+  const force = body.force || letters.has('f') || names.has('force');
+  if (predicate === 'rmForceDotTarget' && !force) return false;
+
+  return segment.words.slice(1).some(TARGET_FAMILY_TESTS[predicate]);
+};
+
 /** True when the segment invokes rm with a recursive flag on a target that
  * resolves to the filesystem root '/'. */
 const isRmRecursiveRootTarget = (segment: ShellSegment): boolean => {
@@ -389,7 +495,14 @@ export const matchSemanticShellPredicate = (predicate: string, value: string): b
   const resolver = SEMANTIC_SHELL_PREDICATE_RESOLVERS[predicate];
 
   const segments = analyzeShellCommand(value);
+  // Shell-function definitions live in their own segments; collect them once
+  // so a later invocation of a forwarding function is judged as the rm call
+  // it really is.
+  const forwardingRmFunctions = collectForwardingRmFunctions(segments);
   return segments.some(
-    (segment) => resolver(segment, segments) || hasAmbiguousRmShape(segment, 0, requested),
+    (segment) =>
+      resolver(segment, segments) ||
+      hasAmbiguousRmShape(segment, 0, requested) ||
+      matchesForwardingRmFunction(segment, requested, forwardingRmFunctions),
   );
 };

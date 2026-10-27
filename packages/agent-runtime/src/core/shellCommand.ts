@@ -688,8 +688,76 @@ const isBareSlash = (word: string): boolean => word === '/';
 const collectFlags = (words: string[]): string[] => words.filter(isDashWord);
 
 /**
+ * Brace-expand a flag word the way Bash does before the word reaches argv:
+ * `rm -r{f,} /` really runs `rm -rf -r /`, so the generated `r` must be
+ * visible to flag classification. A brace group with no top-level comma
+ * (`-r{x}`) is literal in Bash and stays untouched.
+ *
+ * Bounded on both axes (nesting depth and total variants) and falls back to
+ * the unexpanded word when a shape exceeds them — an unexpanded token only
+ * costs detection, never correctness of the parser.
+ */
+const expandFlagBraceAlternatives = (word: string, depth = 0): string[] => {
+  if (depth > 4 || !word.includes('{')) return [word];
+
+  const open = word.indexOf('{');
+  let level = 0;
+  let close = -1;
+  for (let i = open; i < word.length; i++) {
+    if (word[i] === '{') level++;
+    else if (word[i] === '}') {
+      level--;
+      if (level === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  // Unbalanced brace: Bash leaves it literal.
+  if (close < 0) return [word];
+
+  const prefix = word.slice(0, open);
+  const suffix = word.slice(close + 1);
+  const body = word.slice(open + 1, close);
+  const members: string[] = [];
+  let buffer = '';
+  level = 0;
+  for (const char of body) {
+    if (char === '{') level++;
+    else if (char === '}') level--;
+    if (char === ',' && level === 0) {
+      members.push(buffer);
+      buffer = '';
+    } else {
+      buffer += char;
+    }
+  }
+  members.push(buffer);
+
+  const tails = expandFlagBraceAlternatives(suffix, depth + 1);
+  if (members.length < 2) {
+    // `{x}` is literal, but a later brace in the same word may still expand:
+    // keep this group as-is and expand only the tail.
+    return tails.map((tail) => `${word.slice(0, close + 1)}${tail}`);
+  }
+
+  const expanded: string[] = [];
+  for (const member of members) {
+    for (const tail of tails) {
+      expanded.push(`${prefix}${member}${tail}`);
+      if (expanded.length > 32) return [word];
+    }
+  }
+  return expanded;
+};
+
+/**
  * Collect all long-flag names (e.g. 'recursive' from --recursive / --recursive=yes)
  * and all single-letter flags from short-flag words (e.g. r, f from -rf).
+ *
+ * Brace-generated flags count too: the shell expands `-r{f,}` into `-rf` and
+ * `-r` before exec, so the recursive flag must be classified here rather than
+ * left inside the literal `{…}` token.
  */
 export const collectFlagLettersAndNames = (
   flags: string[],
@@ -697,21 +765,23 @@ export const collectFlagLettersAndNames = (
   const letters = new Set<string>();
   const names = new Set<string>();
   for (const flag of flags) {
-    // Long flag: --name or --name=value → register both the name and, for
-    // security conservatism, its first letter (rm -R / -r alias semantic).
-    const longMatch = /^--([^=]+)(?:=.*)?$/.exec(flag);
-    if (longMatch) {
-      names.add(longMatch[1]);
-      letters.add(longMatch[1][0]);
-      continue;
+    for (const variant of expandFlagBraceAlternatives(flag)) {
+      // Long flag: --name or --name=value → register both the name and, for
+      // security conservatism, its first letter (rm -R / -r alias semantic).
+      const longMatch = /^--([^=]+)(?:=.*)?$/.exec(variant);
+      if (longMatch) {
+        names.add(longMatch[1]);
+        letters.add(longMatch[1][0]);
+        continue;
+      }
+      // Combined short flags: -rf → r, f
+      const shortMatch = /^-([A-Z0-9]+)$/i.exec(variant);
+      if (shortMatch) {
+        for (const letter of shortMatch[1]) letters.add(letter);
+        continue;
+      }
+      // Negative number like -1 or lone '-' → not a flag
     }
-    // Combined short flags: -rf → r, f
-    const shortMatch = /^-([A-Z0-9]+)$/i.exec(flag);
-    if (shortMatch) {
-      for (const letter of shortMatch[1]) letters.add(letter);
-      continue;
-    }
-    // Negative number like -1 or lone '-' → not a flag
   }
   return { letters, names };
 };
