@@ -5,6 +5,7 @@ import { lazy, memo, Suspense, useCallback, useEffect, useState } from 'react';
 
 import { useHomeUsageWidgetActive } from '@/business/client/features/HomeUsageWidget';
 import { useHomePromoLine } from '@/business/client/features/useHomePromoLine';
+import { BriefCardSkeleton } from '@/features/DailyBrief/BriefCardSkeleton';
 // Deep import, not the feature barrel: the inbox renderer loads lazily with
 // HomeInbox, and Home must not pull it into its own chunk for one provider.
 import { EntityLinkHostProvider } from '@/features/EntityLink/host';
@@ -139,11 +140,9 @@ const styles = createStaticStyles(({ css }) => ({
   `,
   // Collapsed, the content takes part of the vacated rail track and re-centers
   // on what is left, so the page reads wider without going full-bleed.
-  // An enabled rail can render no cards; reclaim its space without changing preferences.
   contentCollapsed: css`
     @media (width > 1100px) {
-      &[data-rail-collapsed='true'],
-      div:has(> #home-rail:empty) > & {
+      &[data-rail-collapsed='true'] {
         transform: translateX(${COLLAPSED_CONTENT_OFFSET}px);
         width: calc(100% + ${COLLAPSED_CONTENT_GAIN}px);
 
@@ -175,8 +174,7 @@ const styles = createStaticStyles(({ css }) => ({
   `,
   heroCollapsed: css`
     @media (width > 1100px) {
-      &[data-rail-collapsed='true'],
-      div:has(> #home-rail:empty) > & {
+      &[data-rail-collapsed='true'] {
         transform: translateX(${COLLAPSED_CONTENT_OFFSET}px);
 
         &:dir(rtl) {
@@ -219,8 +217,7 @@ const styles = createStaticStyles(({ css }) => ({
         transform: translateX(-${COLLAPSED_CONTENT_OFFSET * 2}px);
       }
 
-      &[data-collapsed='true'],
-      div:has(> #home-rail:empty) > div > & {
+      &[data-collapsed='true'] {
         transform: none;
       }
     }
@@ -362,6 +359,15 @@ const Home = memo(() => {
   if (acceptancePortalOpen && !acceptanceDrawerMounted) setAcceptanceDrawerMounted(true);
   const railVisible = resolveRailVisibility({ hiddenWidgets, isLogin, showHomeRail, usageActive });
   const railCollapsed = !railVisible;
+  /**
+   * An enabled rail can settle with no cards; the main column then reclaims its
+   * space without changing the preference. Only the loaded inbox may report it:
+   * judging by an empty DOM node also matched while the inbox chunk and its
+   * feeds were still loading, so every refresh painted one column first and
+   * slid back once the cards arrived (LOBE-15206).
+   */
+  const [railEmpty, setRailEmpty] = useState(false);
+  const contentCollapsed = railCollapsed || (isLogin && railEmpty);
   const portraitVisible = Boolean(isLogin && showHomePortrait);
 
   useEffect(() => {
@@ -403,13 +409,13 @@ const Home = memo(() => {
     <Flexbox className={styles.grid}>
       <div
         className={cx(styles.hero, portraitVisible && styles.heroWithSpeech, styles.heroCollapsed)}
-        data-rail-collapsed={railCollapsed}
+        data-rail-collapsed={contentCollapsed}
       >
         <div className={styles.header}>
           <HomeHeader />
         </div>
         {portraitVisible && (
-          <div className={styles.speech} data-collapsed={railCollapsed}>
+          <div className={styles.speech} data-collapsed={contentCollapsed}>
             {/* Keep the agent's line and artwork together in both header layouts. */}
             <div className={styles.bubbleSlot}>
               <PortraitBubble promo={promo} />
@@ -423,7 +429,7 @@ const Home = memo(() => {
 
       <Flexbox
         className={cx(styles.main, styles.content, styles.contentCollapsed)}
-        data-rail-collapsed={railCollapsed}
+        data-rail-collapsed={contentCollapsed}
         data-testid={'home-main'}
         gap={24}
       >
@@ -452,11 +458,20 @@ const Home = memo(() => {
           id={'home-rail'}
           inert={railCollapsed}
         >
-          <Suspense fallback={null}>
+          {/* Hold the rail's place while the inbox loads, with the inbox's own
+              first-load skeleton, so the first frame is already two columns. */}
+          <Suspense
+            fallback={
+              <Flexbox data-testid={'home-rail-skeleton'} gap={12}>
+                <BriefCardSkeleton />
+                <BriefCardSkeleton />
+              </Flexbox>
+            }
+          >
             {/* The inbox reads assistant replies, which carry internal entity
                 links; only the acceptance drawer can show a detail here. */}
             <EntityLinkHostProvider portal={HOME_ENTITY_PORTAL_SCOPE}>
-              <HomeInbox {...RAIL_INBOX_PROPS} variant={'rail'} />
+              <HomeInbox {...RAIL_INBOX_PROPS} variant={'rail'} onRailEmptyChange={setRailEmpty} />
             </EntityLinkHostProvider>
           </Suspense>
         </aside>
