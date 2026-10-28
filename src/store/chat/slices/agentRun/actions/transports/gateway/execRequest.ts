@@ -150,12 +150,15 @@ export const buildExecAppContext = (
     executionContext,
     initialTopicMetadata,
     messageContext = executionContext,
+    projectId,
     projectWorkingDirectoryId,
   }: {
     executionContext: ConversationContext;
     /** Seed metadata for the topic this run creates. */
     initialTopicMetadata?: Partial<ChatTopicMetadata>;
     messageContext?: ConversationContext;
+    /** The project the topic this run creates joins when it has no directory. */
+    projectId?: string;
     /** The project directory the topic this run creates is bound to. */
     projectWorkingDirectoryId?: string;
   },
@@ -198,6 +201,7 @@ export const buildExecAppContext = (
     // supervisor turn loses its role on the step_start snapshot / refetch
     // and renders as a generic assistant.
     orchestrationRole: executionContext.orchestrationRole,
+    ...(projectId && { projectId }),
     ...(projectWorkingDirectoryId && { projectWorkingDirectoryId }),
     scope: executionContext.scope,
     taskId:

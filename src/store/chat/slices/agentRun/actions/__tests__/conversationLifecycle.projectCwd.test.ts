@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { agentService } from '@/services/agent';
+import { aiChatService } from '@/services/aiChat';
 import { getPendingTopicRepos, setPendingTopicRepos } from '@/store/chat/pendingTopicRepos';
 import { type ProjectDirectory, useProjectDirectoryStore } from '@/store/projectWorkingDirectory';
 import { getSessionStoreState } from '@/store/session';
@@ -266,6 +267,100 @@ describe('sendMessage in a project directory', () => {
         workingDirectory: AGENT_DEFAULT_PATH,
         workingDirectoryConfig: { path: AGENT_DEFAULT_PATH },
       }),
+    );
+  });
+});
+
+// Review feedback: "new topic" in a project without a usable directory created
+// the topic up front. It now opens a blank conversation that stages the project
+// alone, so the first message — on either transport — has to carry it.
+describe('sendMessage in a blank project conversation without a directory', () => {
+  const agentId = TEST_IDS.SESSION_ID;
+  const staged = { agentId, projectId: 'prj-1' };
+
+  it('creates the gateway topic inside the staged project', async () => {
+    setupMockSelectors({ agentConfig: {} });
+    const executeGatewayAgentSpy = vi.fn().mockResolvedValue({ topicId: 'tpc_new' });
+    act(() => {
+      useChatStore.setState({
+        activeAgentId: agentId,
+        activeTopicId: undefined,
+        executeGatewayAgent: executeGatewayAgentSpy,
+        isGatewayModeEnabled: () => true,
+        pendingNewTopicDirectory: staged,
+      });
+    });
+
+    const { result } = renderHook(() => useChatStore());
+    await act(async () => {
+      await result.current.sendMessage({
+        context: { agentId, threadId: null, topicId: null },
+        message: 'Start in the project',
+      });
+    });
+
+    expect(executeGatewayAgentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'prj-1',
+        projectWorkingDirectoryId: undefined,
+      }),
+    );
+  });
+
+  it('creates the client-runtime topic inside the staged project', async () => {
+    setupMockSelectors({ agentConfig: {} });
+    const sendMessageInServerSpy = vi
+      .spyOn(aiChatService, 'sendMessageInServer')
+      .mockRejectedValue(new Error('stop after the request'));
+    act(() => {
+      useChatStore.setState({
+        activeAgentId: agentId,
+        activeTopicId: undefined,
+        isGatewayModeEnabled: () => false,
+        pendingNewTopicDirectory: staged,
+      });
+    });
+
+    const { result } = renderHook(() => useChatStore());
+    await act(async () => {
+      await result.current
+        .sendMessage({
+          context: { agentId, threadId: null, topicId: null },
+          message: 'Start in the project',
+        })
+        .catch(() => undefined);
+    });
+
+    expect(sendMessageInServerSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ newTopic: expect.objectContaining({ projectId: 'prj-1' }) }),
+      expect.any(AbortController),
+    );
+    // The topic never came to be, so the blank conversation keeps its project.
+    expect(result.current.pendingNewTopicDirectory).toEqual(staged);
+  });
+
+  it('keeps the project off a send into an existing topic', async () => {
+    setupMockSelectors({ agentConfig: {} });
+    const executeGatewayAgentSpy = vi.fn().mockResolvedValue({ topicId: 'tpc_existing' });
+    act(() => {
+      useChatStore.setState({
+        activeAgentId: agentId,
+        executeGatewayAgent: executeGatewayAgentSpy,
+        isGatewayModeEnabled: () => true,
+        pendingNewTopicDirectory: staged,
+      });
+    });
+
+    const { result } = renderHook(() => useChatStore());
+    await act(async () => {
+      await result.current.sendMessage({
+        context: { agentId, threadId: null, topicId: 'tpc_existing' },
+        message: 'Follow up',
+      });
+    });
+
+    expect(executeGatewayAgentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: undefined }),
     );
   });
 });

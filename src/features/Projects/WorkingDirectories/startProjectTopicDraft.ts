@@ -31,10 +31,10 @@ export const canStageDraftOn = (
   (fixedDeviceId === undefined || (!!fixedDeviceId && directory.deviceId === fixedDeviceId));
 
 /**
- * Open a blank project conversation on one directory, the same habit as an
- * agent's "+": no topic row is created here. The staged directory pins the
- * agent and device for the composer, and the first message creates the topic
- * inside it (see `pendingNewTopicDirectory`).
+ * Open a blank project conversation, the same habit as an agent's "+": no topic
+ * row is created here. A staged directory pins the agent and device for the
+ * composer; without one only the project is staged. Either way the first
+ * message creates the topic inside the project (see `pendingNewTopicDirectory`).
  */
 export const startProjectTopicDraft = ({
   agentId,
@@ -43,7 +43,7 @@ export const startProjectTopicDraft = ({
   projectId,
 }: {
   agentId: string;
-  directoryId: string;
+  directoryId?: string;
   navigate: (path: string) => void;
   projectId: string;
 }) => {
@@ -54,6 +54,8 @@ export const startProjectTopicDraft = ({
     clearNewKeyContext: { agentId, groupId: null },
     skipRefreshMessage: true,
   });
-  chat.setPendingNewTopicDirectory({ agentId, projectWorkingDirectoryId: directoryId });
+  chat.setPendingNewTopicDirectory(
+    directoryId ? { agentId, projectWorkingDirectoryId: directoryId } : { agentId, projectId },
+  );
   navigate(getProjectDraftPath(projectId, agentId, directoryId));
 };

@@ -102,6 +102,11 @@ export interface SendMessageServerParams {
      * post-execution metadata write which can be skipped on cancel/error.
      */
     metadata?: ChatTopicMetadata;
+    /**
+     * Project the new topic belongs to — a blank project conversation opened
+     * without a working directory. The server checks the project is readable.
+     */
+    projectId?: string;
     /** Pinned model snapshot for the new topic (top-level `topics.model` column). */
     model?: string;
     provider?: string;
@@ -190,6 +195,7 @@ export const AiSendMessageServerSchema = z.object({
       id: clientEntityId('topics'),
       metadata: z.custom<ChatTopicMetadata>().optional(),
       model: z.string().optional(),
+      projectId: z.string().optional(),
       provider: z.string().optional(),
       title: z.string().optional(),
       topicMessageIds: z.array(z.string()).optional(),

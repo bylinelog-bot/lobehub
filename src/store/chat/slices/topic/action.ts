@@ -69,7 +69,7 @@ import { type ChatTopic, type ChatTopicStatus, type CreateTopicParams } from '@/
 import { setNamespace } from '@/utils/storeDebug';
 
 import { displayMessageSelectors } from '../message/selectors';
-import { type TopicData } from './initialState';
+import { type PendingNewTopicDirectory, type TopicData } from './initialState';
 import { type PendingTopicStatusSource, PendingTopicStatusWrites } from './pendingStatusWrites';
 import {
   applyTopicDispatchToBucket,
@@ -306,8 +306,8 @@ export class ChatTopicActionImpl {
   };
 
   /**
-   * Stage (or clear) the project working directory the next topic creation
-   * binds to.
+   * Stage (or clear) the project working directory — or, without one, the
+   * project — the next topic creation binds to.
    *
    * `+` on a project group opens a blank conversation *without* creating a row;
    * this records which directory that blank conversation belongs to, and
@@ -315,10 +315,7 @@ export class ChatTopicActionImpl {
    * Without it the deferred row would be born with only a path — outside the
    * project list, the sidebar's project grouping and its execution routing.
    */
-  setPendingNewTopicDirectory = (value?: {
-    agentId: string;
-    projectWorkingDirectoryId: string;
-  }): void => {
+  setPendingNewTopicDirectory = (value?: PendingNewTopicDirectory): void => {
     this.#set({ pendingNewTopicDirectory: value }, false, n('setPendingNewTopicDirectory'));
   };
 
@@ -1828,17 +1825,20 @@ export class ChatTopicActionImpl {
 
   internal_createTopic = async (params: CreateTopicParams): Promise<string> => {
     // A blank conversation opened from a project group's "+" carries the
-    // directory it belongs to — fold it into the create call so the row is born
-    // inside that project. Only for the agent it was staged on: a pending
-    // directory must never land on another agent's topic.
+    // directory (or project) it belongs to — fold it into the create call so the
+    // row is born inside that project. Only for the agent it was staged on: a
+    // pending staging must never land on another agent's topic.
     const pending = this.#get().pendingNewTopicDirectory;
-    const targetSessionId = params.sessionId ?? this.#get().activeAgentId;
-    const pendingDirectoryId =
-      pending && pending.agentId === targetSessionId
-        ? pending.projectWorkingDirectoryId
-        : undefined;
-    const createParams: CreateTopicParams = pendingDirectoryId
-      ? { ...params, projectWorkingDirectoryId: pendingDirectoryId }
+    const staged =
+      pending?.agentId === (params.sessionId ?? this.#get().activeAgentId) ? pending : undefined;
+    const createParams: CreateTopicParams = staged
+      ? {
+          ...params,
+          ...(staged.projectId && { projectId: staged.projectId }),
+          ...(staged.projectWorkingDirectoryId && {
+            projectWorkingDirectoryId: staged.projectWorkingDirectoryId,
+          }),
+        }
       : params;
 
     const tmpId = Date.now().toString();
@@ -1848,7 +1848,7 @@ export class ChatTopicActionImpl {
     );
 
     const topicId = await topicService.createTopic(createParams);
-    if (pendingDirectoryId) this.#get().setPendingNewTopicDirectory();
+    if (staged) this.#get().setPendingNewTopicDirectory();
     await this.#get().refreshTopic();
 
     return topicId;

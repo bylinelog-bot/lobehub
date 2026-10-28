@@ -80,4 +80,17 @@ describe('startProjectTopicDraft', () => {
     // The draft rides in the route so it stays with the pane that opened it.
     expect(navigate).toHaveBeenCalledWith('/project/prj_1/topic?agent=agt_1&dir=pwd_1');
   });
+
+  /** @example Review feedback: "new topic" without a usable directory created the topic up front. */
+  it('stages the project alone when there is no directory, still creating nothing', () => {
+    const navigate = vi.fn();
+
+    startProjectTopicDraft({ agentId: 'agt_1', navigate, projectId: 'prj_1' });
+
+    expect(chat.setPendingNewTopicDirectory).toHaveBeenCalledWith({
+      agentId: 'agt_1',
+      projectId: 'prj_1',
+    });
+    expect(navigate).toHaveBeenCalledWith('/project/prj_1/topic?agent=agt_1');
+  });
 });

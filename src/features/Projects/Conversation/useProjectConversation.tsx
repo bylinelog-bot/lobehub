@@ -10,6 +10,7 @@ import { useInitAgentConfig } from '@/hooks/useInitAgentConfig';
 import { useAgentStore } from '@/store/agent';
 import { useChatStore } from '@/store/chat';
 import { topicSelectors } from '@/store/chat/selectors';
+import type { PendingNewTopicDirectory } from '@/store/chat/slices/topic/initialState';
 import { useCurrentProjectDetail, useProjectStore } from '@/store/project';
 import {
   useProjectDirectories,
@@ -60,13 +61,16 @@ export const useProjectConversation = () => {
   );
   const directories = useProjectDirectories(detail?.project.id);
   const directoryIds = useMemo(() => new Set(directories.map((d) => d.id)), [directories]);
-  const draft = useMemo(
-    () =>
-      draftAgentParam && draftDirectoryParam && directoryIds.has(draftDirectoryParam)
-        ? { agentId: draftAgentParam, projectWorkingDirectoryId: draftDirectoryParam }
-        : undefined,
-    [draftAgentParam, draftDirectoryParam, directoryIds],
-  );
+  // Without a directory the draft stages its project alone (see `startProjectTopicDraft`).
+  const draftProjectId = detail?.project.id;
+  const draft = useMemo((): PendingNewTopicDirectory | undefined => {
+    if (!draftAgentParam) return undefined;
+    if (!draftDirectoryParam)
+      return draftProjectId ? { agentId: draftAgentParam, projectId: draftProjectId } : undefined;
+    return directoryIds.has(draftDirectoryParam)
+      ? { agentId: draftAgentParam, projectWorkingDirectoryId: draftDirectoryParam }
+      : undefined;
+  }, [draftAgentParam, draftDirectoryParam, draftProjectId, directoryIds]);
   const draftAgentId = draft?.agentId;
   const restageDraft = useProjectDraftStaging(draft, directoryIds);
   const chatAgentId = useChatStore((s) => s.activeAgentId);

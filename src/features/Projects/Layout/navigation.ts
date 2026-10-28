@@ -6,12 +6,14 @@ export const getProjectTopicPath = (projectId: string, topicId?: string) =>
   topicId ? `/project/${projectId}/topic/${topicId}` : `/project/${projectId}/topic`;
 
 /**
- * A blank project conversation a sidebar "+" opened for one agent on one
- * directory. The draft lives in the route so it stays with its own pane (and
- * survives a reload); nothing is created until its first message.
+ * A blank project conversation a sidebar "+" opened for one agent, on one
+ * directory or on none. The draft lives in the route so it stays with its own
+ * pane (and survives a reload); nothing is created until its first message.
  */
-export const getProjectDraftPath = (projectId: string, agentId: string, directoryId: string) =>
-  `${getProjectTopicPath(projectId)}?${new URLSearchParams({ agent: agentId, dir: directoryId })}`;
+export const getProjectDraftPath = (projectId: string, agentId: string, directoryId?: string) =>
+  `${getProjectTopicPath(projectId)}?${new URLSearchParams(
+    directoryId ? { agent: agentId, dir: directoryId } : { agent: agentId },
+  )}`;
 
 export const getProjectLibraryPath = (projectId: string, libraryId: string) =>
   `/project/${projectId}/library/${libraryId}`;

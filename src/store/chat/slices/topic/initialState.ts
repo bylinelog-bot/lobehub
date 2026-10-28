@@ -39,6 +39,15 @@ export interface TopicData extends ReplicaPagedData<ChatTopic, number> {
   withDetails?: boolean;
 }
 
+/**
+ * The blank project conversation a new topic will be born in: a working
+ * directory (which implies its project), or the project alone when the
+ * conversation was opened without a directory.
+ */
+export type PendingNewTopicDirectory =
+  | { agentId: string; projectId?: undefined; projectWorkingDirectoryId: string }
+  | { agentId: string; projectId: string; projectWorkingDirectoryId?: undefined };
+
 export interface ChatTopicState {
   // TODO: need to add the null to the type
   activeTopicId?: string;
@@ -90,7 +99,7 @@ export interface ChatTopicState {
    * is part of the value: switching agents must not let one agent's pending
    * directory land on another agent's topic.
    */
-  pendingNewTopicDirectory?: { agentId: string; projectWorkingDirectoryId: string };
+  pendingNewTopicDirectory?: PendingNewTopicDirectory;
   searchTopics: ChatTopic[];
   /**
    * Unified topic data map for each agent
