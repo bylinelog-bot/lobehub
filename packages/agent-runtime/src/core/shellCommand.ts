@@ -437,11 +437,7 @@ const splitIntoRawSegments = (command: string): string[] => {
     // it still separates segments. `#` inside a word (`foo#bar`), inside
     // `${#var}` (preceded by `{`) and inside legacy backtick substitution stay
     // literal.
-    if (
-      char === '#' &&
-      !inBacktick &&
-      (i === 0 || /[\s;|&(`]/.test(PREPARED[i - 1] ?? ''))
-    ) {
+    if (char === '#' && !inBacktick && (i === 0 || /[\s;|&(`]/.test(PREPARED[i - 1] ?? ''))) {
       const commentEnd = PREPARED.indexOf('\n', i);
       i = commentEnd === -1 ? PREPARED.length : commentEnd - 1;
       continue;
@@ -454,8 +450,7 @@ const splitIntoRawSegments = (command: string): string[] => {
       // terminator reopened a phantom quote that swallowed the following
       // separator — `echo $'\''; rm -rf ~` then resolved to `echo` and the
       // deletion reached no predicate.
-      inAnsiCQuote =
-        char === "'" && PREPARED[i - 1] === '$' && !isEscapedAt(PREPARED, i - 1);
+      inAnsiCQuote = char === "'" && PREPARED[i - 1] === '$' && !isEscapedAt(PREPARED, i - 1);
       current += char;
       continue;
     }
@@ -563,10 +558,7 @@ const splitIntoRawSegments = (command: string): string[] => {
     // `<&` (input, e.g. `0<&0 rm -rf ~`). Recognizing only `>&` split the
     // input form into `0<` and `0 rm -rf ~`, whose resolved command was `0`.
     const previousChar = current.at(-1) ?? '';
-    if (
-      char === '&' &&
-      (previousChar === '>' || previousChar === '<' || PREPARED[i + 1] === '>')
-    ) {
+    if (char === '&' && (previousChar === '>' || previousChar === '<' || PREPARED[i + 1] === '>')) {
       current += char;
       continue;
     }
@@ -617,6 +609,22 @@ const ANSI_C_SIMPLE_ESCAPES: Record<string, string> = {
 const decodeAnsiCQuoted = (raw: string, start: number): { end: number; value: string } => {
   let value = '';
   let i = start;
+  // Bash stores ANSI-C strings as C strings: a decoded NUL terminates the
+  // value, and everything after it is dropped even though the closing quote is
+  // still honoured (`$'EOF\0ignored'` is the word `EOF`). Appending the tail
+  // made the heredoc delimiter `EOF\0ignored`, so the real terminator line
+  // never matched and the `rm -rf ~` after the heredoc was read as stdin data.
+  let truncated = false;
+  const append = (text: string): void => {
+    if (truncated) return;
+    const nul = text.indexOf('\0');
+    if (nul === -1) {
+      value += text;
+      return;
+    }
+    value += text.slice(0, nul);
+    truncated = true;
+  };
   const readDigits = (pattern: RegExp, max: number): string => {
     let digits = '';
     while (digits.length < max && i < raw.length && pattern.test(raw[i])) digits += raw[i++];
@@ -626,30 +634,30 @@ const decodeAnsiCQuoted = (raw: string, start: number): { end: number; value: st
     const char = raw[i];
     if (char === "'") return { end: i + 1, value };
     if (char !== '\\' || i + 1 >= raw.length) {
-      value += char;
+      append(char);
       i++;
       continue;
     }
     const next = raw[i + 1];
     i += 2;
     if (next in ANSI_C_SIMPLE_ESCAPES) {
-      value += ANSI_C_SIMPLE_ESCAPES[next];
+      append(ANSI_C_SIMPLE_ESCAPES[next]);
     } else if (next === 'x') {
       const hex = readDigits(/[\da-f]/i, 2);
-      value += hex ? String.fromCodePoint(Number.parseInt(hex, 16)) : '\\x';
+      append(hex ? String.fromCodePoint(Number.parseInt(hex, 16)) : '\\x');
     } else if (next === 'u' || next === 'U') {
       const hex = readDigits(/[\da-f]/i, next === 'u' ? 4 : 8);
       const codePoint = hex ? Number.parseInt(hex, 16) : Number.NaN;
-      value += codePoint <= 0x10_ffff ? String.fromCodePoint(codePoint) : `\\${next}${hex}`;
+      append(codePoint <= 0x10_ffff ? String.fromCodePoint(codePoint) : `\\${next}${hex}`);
     } else if (/[0-7]/.test(next)) {
       i--;
       const octal = readDigits(/[0-7]/, 3);
-      value += String.fromCodePoint(Number.parseInt(octal, 8) & 0xff);
+      append(String.fromCodePoint(Number.parseInt(octal, 8) & 0xff));
     } else if (next === 'c' && i < raw.length) {
-      value += String.fromCodePoint(raw[i++].toUpperCase().charCodeAt(0) ^ 0x40);
+      append(String.fromCodePoint(raw[i++].toUpperCase().charCodeAt(0) ^ 0x40));
     } else {
       // Unknown escape: bash keeps the backslash.
-      value += `\\${next}`;
+      append(`\\${next}`);
     }
   }
   return { end: i, value };
@@ -876,6 +884,12 @@ const tokenizeWords = (raw: string): string[] => {
  */
 export const stripGroupingParens = (word: string): string =>
   word.replace(/^\(+/, '').replace(/\)+$/, '');
+
+/** Leading subshell openers only (`(command` → `command`).
+ * Used where the trailing `)` must stay meaningful for the surrounding
+ * compound syntax (function definitions `f()`, `case` arms `a)`) — stripping
+ * it there merged syntax tokens into command words. */
+const stripLeadingGroupingParens = (word: string): string => word.replace(/^\(+/, '');
 
 const isHomePath = (word: string): boolean => {
   const operand = stripGroupingParens(word);
@@ -1127,7 +1141,13 @@ const resolveCommandWord = (words: string[]): { index: number; name: string } | 
   while (index < words.length) {
     index = skipShellSyntax(words, index);
     if (index >= words.length) break;
-    const word = words[index];
+    // A subshell opener glues onto the first word (`(command rm -rf ~)`), and
+    // `(` is an operator, not part of the executable name. Strip it BEFORE the
+    // wrapper lookup: otherwise `(command` is not recognized as the `command`
+    // builtin, the unwrap loop stops, and resolution returns `command` — every
+    // predicate then reports "not rm" while Bash runs `rm -rf ~` inside the
+    // subshell.
+    const word = stripLeadingGroupingParens(words[index]);
     // Path-qualified wrappers execute identically to bare ones
     // (/usr/bin/sudo rm …). Normalize to basename before lookup.
     const base = commandBasename(word);

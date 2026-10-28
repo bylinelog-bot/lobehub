@@ -657,13 +657,12 @@ describe('matchSemanticShellPredicate', () => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(true);
     });
 
-    it.each([
-      '>"/tmp/a b" rm -rf /',
-      "2>'/tmp/a b' rm -rf /",
-      'rm -rf / >"/tmp/a b"',
-    ])('blocks a root delete hidden behind a quoted redirect target: %s', (command) => {
-      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
-    });
+    it.each(['>"/tmp/a b" rm -rf /', "2>'/tmp/a b' rm -rf /", 'rm -rf / >"/tmp/a b"'])(
+      'blocks a root delete hidden behind a quoted redirect target: %s',
+      (command) => {
+        expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+      },
+    );
 
     it.each([
       // The quoted word is a redirect target, not an rm operand.
@@ -688,12 +687,12 @@ describe('matchSemanticShellPredicate', () => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(true);
     });
 
-    it.each([
-      "# wipe the user's root\nrm -rf /",
-      '# clean all\nrm -rf /',
-    ])('blocks a root delete that follows a quoted comment: %s', (command) => {
-      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
-    });
+    it.each(["# wipe the user's root\nrm -rf /", '# clean all\nrm -rf /'])(
+      'blocks a root delete that follows a quoted comment: %s',
+      (command) => {
+        expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+      },
+    );
 
     it.each([
       // Comment-only text is never a command.
@@ -702,6 +701,58 @@ describe('matchSemanticShellPredicate', () => {
       // `#` inside a word stays literal, so this is still a plain git call.
       'git log --format=foo#bar',
     ])('does not flag comment text or in-word hashes: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
+    });
+  });
+
+  describe('fifteenth-round review: subshell wrappers and NUL-truncated heredoc delimiters', () => {
+    // `(` is an operator, not part of the executable name. The wrapper lookup
+    // used the raw token, so `(command` never matched the `command` builtin:
+    // resolution stopped on `command` (an "unrelated" confident command) and
+    // every predicate returned false while Bash ran the delete inside the
+    // subshell.
+    it.each([
+      '(command rm -rf ~); echo ~',
+      '(builtin command rm -rf ~)',
+      '(exec rm -rf ~) && echo done',
+      '(command rm -rf /)',
+    ])('blocks a delete behind a subshell-wrapped exec prefix: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    // Bash stores ANSI-C quoted strings as C strings: a decoded NUL ends the
+    // value, so `$'EOF\0ignored'` is the delimiter `EOF`. Keeping the tail made
+    // the terminator line never match and the delete after the heredoc was read
+    // as stdin data.
+    it.each([
+      "cat <<$'EOF\\0ignored'\nx\nEOF\nrm -rf ~",
+      "cat <<$'EOF\\x00ignored'\nx\nEOF\nrm -rf ~",
+      'cat <<-EOF\n\tx\n\tEOF\nrm -rf /',
+    ])('blocks a delete that follows a NUL-truncated heredoc: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    it.each([
+      // Function definitions and `case` arms rely on the `)` token; the
+      // subshell fix must not collapse them into command words.
+      'f() { rm -rf /; }',
+      'zap() { rm "$@"; } && zap -rf /',
+    ])('still blocks a delete inside compound syntax: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(true);
+    });
+
+    it.each([
+      'case x in a) echo "rm -rf /";; esac',
+      'f() { echo hi; }',
+      "cat <<$'EOF\\0ignored'\nrm -rf ~ is stdin data\nEOF",
+    ])('does not flag harmless compound or heredoc text: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
       expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
     });
