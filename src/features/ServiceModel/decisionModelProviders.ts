@@ -1,4 +1,5 @@
 import type { EnabledAiModel, EnabledProvider } from 'model-bank';
+import { isProviderFetchOnClient } from 'model-bank/modelProviders';
 
 import type { AiProviderRuntimeConfig } from '@/types/aiProvider';
 
@@ -9,7 +10,7 @@ export const decisionModelProviders = (
   runtimeConfig: Record<string, AiProviderRuntimeConfig>,
 ) =>
   providers
-    .filter((provider) => !runtimeConfig[provider.id]?.fetchOnClient)
+    .filter((provider) => !isProviderFetchOnClient(provider.id, runtimeConfig[provider.id]))
     .map((provider) => ({
       ...provider,
       name: provider.name || provider.id,

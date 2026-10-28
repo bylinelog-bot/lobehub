@@ -28,11 +28,40 @@ describe('decisionModelProviders', () => {
     expect(result.map(({ children }) => children.map(({ id }) => id))).toEqual([['jev']]);
   });
 
+  it.each([undefined, false])(
+    'excludes keyless custom endpoints with fetchOnClient=%s',
+    (fetchOnClient) => {
+      expect(
+        decisionModelProviders([model('jev')], providers, {
+          typesafe: {
+            config: {},
+            settings: {},
+            keyVaults: { baseURL: 'http://localhost:8080/v1' },
+            fetchOnClient,
+          },
+        }),
+      ).toEqual([]);
+    },
+  );
+
+  it('keeps server-configured providers when a stale client flag has no client credentials', () => {
+    expect(
+      decisionModelProviders([model('jev')], providers, {
+        typesafe: { config: {}, settings: {}, keyVaults: {}, fetchOnClient: true },
+      }),
+    ).toHaveLength(1);
+  });
+
   it('excludes client-only providers and empty groups', () => {
     expect(decisionModelProviders([], providers, {})).toEqual([]);
     expect(
       decisionModelProviders([model('jev')], providers, {
-        typesafe: { config: {}, settings: {}, keyVaults: {}, fetchOnClient: true },
+        typesafe: {
+          config: {},
+          settings: {},
+          keyVaults: { apiKey: 'test-key' },
+          fetchOnClient: true,
+        },
       }),
     ).toEqual([]);
   });
