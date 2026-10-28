@@ -40,11 +40,13 @@ class MCPService {
     payload: ChatToolPayload,
     {
       signal,
+      clientRuntime,
       topicId,
       elicitation,
       agentId,
     }: {
       signal?: AbortSignal;
+      clientRuntime?: boolean;
       topicId?: string;
       elicitation?: McpElicitationCall;
       agentId?: string;
@@ -91,6 +93,36 @@ class MCPService {
       ]);
       connector = [...owned, ...base].find((entry) => entry.identifier === identifier);
     }
+    const runDurableClientTool = async () => {
+      if (!elicitation) throw new Error('Client MCP invocation has no durable identity');
+      let enqueueUnconfirmed = true;
+      while (!signal?.aborted && Date.now() < elicitation.deadline + 60_000) {
+        if (enqueueUnconfirmed) {
+          try {
+            await executionClient.mcpElicitation.startClientTool.mutate(elicitation.identity, {
+              signal,
+            });
+            enqueueUnconfirmed = false;
+          } catch (error) {
+            const status = toRecord(toRecord(error)?.data)?.httpStatus;
+            if (signal?.aborted || (typeof status === 'number' && status >= 400 && status < 500))
+              throw error;
+            // The enqueue may have committed before its ACK was lost. Await its
+            // exact saved result; an empty long poll retries the same fenced outbox.
+          }
+        }
+        const outcome = await executionClient.mcpElicitation.clientToolOutcome.query(
+          elicitation.identity,
+          { signal },
+        );
+        if (outcome) return outcome as MCPToolCallResult;
+      }
+      throw new Error(
+        signal?.aborted
+          ? 'The user aborted a request.'
+          : 'MCP invocation did not finish before its deadline',
+      );
+    };
     if (connector && !connector.isEnabled) throw new Error('Connector is disabled');
     if (
       connector &&
@@ -130,6 +162,7 @@ class MCPService {
         );
         return deserializeMcpIpcPayload<MCPToolCallResult>(result);
       }
+      if (clientRuntime) return runDurableClientTool();
       try {
         return (await executionClient.connector.callTool.mutate(
           { args, elicitation, identifier, toolName: apiName },
@@ -162,6 +195,8 @@ class MCPService {
     }
 
     if (!plugin) return;
+    if (clientRuntime && !(isDesktop && plugin.customParams?.mcp?.type === 'stdio'))
+      return runDurableClientTool();
 
     const connection = plugin.customParams?.mcp;
     const settingsEntries = plugin.settings

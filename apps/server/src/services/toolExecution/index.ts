@@ -1,4 +1,4 @@
-import { type McpElicitationCheckpoint, McpInputRequiredError } from '@lobechat/mcp-elicitation';
+import { McpInputRequiredError } from '@lobechat/mcp-elicitation';
 import { DEFAULT_TOOL_RESULT_MAX_LENGTH, truncateToolResult } from '@lobechat/prompts/toolResult';
 import { type ChatToolPayload } from '@lobechat/types';
 import { safeParseJSON } from '@lobechat/utils';
@@ -18,6 +18,7 @@ import {
   buildBlockedToolResponse,
   getConnectorToolPermission,
 } from '@/libs/mcp/connectorPermissionCheck';
+import { signMcpDeviceGrant } from '@/libs/trpc/utils/internalJwt';
 import { deviceGateway } from '@/server/services/deviceGateway';
 import { resolveDeviceClientKind } from '@/server/services/deviceGateway/deviceChannels';
 import { resolveDeviceDispatchAuthorizationFailure } from '@/server/services/deviceGateway/dispatchAuthorization';
@@ -32,6 +33,7 @@ import {
   type McpElicitationExpiry,
   McpElicitationService,
 } from '../mcp/elicitation/McpElicitationService';
+import type { McpElicitationRuntime } from '../mcp/elicitation/resume';
 import { type BuiltinToolsExecutor } from './builtin';
 import { classifyToolError, getToolAccessDeniedError } from './errorClassification';
 import { buildMcpAuthorizationErrorContent, isMcpAuthorizationError } from './mcpAuthError';
@@ -47,6 +49,7 @@ const log = debug('lobe-server:tool-execution-service');
 
 interface ToolExecutionServiceDeps {
   builtinToolsExecutor: BuiltinToolsExecutor;
+  mcpRuntime?: McpElicitationRuntime;
   mcpService: MCPService;
   onMcpElicitationExpired?: McpElicitationExpiry;
 }
@@ -139,15 +142,18 @@ export class ToolExecutionService {
   private builtinToolsExecutor: BuiltinToolsExecutor;
   private mcpService: MCPService;
   private onMcpElicitationExpired?: McpElicitationExpiry;
+  private mcpRuntime?: McpElicitationRuntime;
 
   constructor({
     mcpService,
     builtinToolsExecutor,
     onMcpElicitationExpired,
+    mcpRuntime,
   }: ToolExecutionServiceDeps) {
     this.builtinToolsExecutor = builtinToolsExecutor;
     this.mcpService = mcpService;
     this.onMcpElicitationExpired = onMcpElicitationExpired;
+    this.mcpRuntime = mcpRuntime;
   }
 
   async executeTool(
@@ -324,6 +330,7 @@ export class ToolExecutionService {
             context.userId,
             context.workspaceId,
             this.onMcpElicitationExpired,
+            this.mcpRuntime,
           )
         : undefined;
     const identity: McpCallIdentity | undefined = elicitationService
@@ -408,7 +415,7 @@ export class ToolExecutionService {
       log('MCP tool execution completed for: %s:%s', identifier, apiName);
 
       return {
-        content: typeof result === 'string' ? result : result.content,
+        content: typeof result === 'string' ? result : JSON.stringify(result),
         ...(result?.success === false
           ? {
               error: {
@@ -582,6 +589,30 @@ export class ToolExecutionService {
       target.workspaceId ?? 'personal',
     );
 
+    const deadline = Date.now() + (context.executionTimeoutMs ?? 60_000);
+    const identity =
+      context.operationId && context.assistantMessageId
+        ? {
+            apiName,
+            assistantMessageId: context.assistantMessageId,
+            identifier,
+            operationId: context.operationId,
+            toolCallId: payload.id,
+            toolMessageId: context.toolMessageId,
+          }
+        : undefined;
+    const delegation =
+      identity && target.workspaceId
+        ? await signMcpDeviceGrant(
+            {
+              ...identity,
+              userId: context.userId!,
+              workspaceId: target.workspaceId,
+              deviceId: target.deviceId,
+            },
+            deadline,
+          )
+        : undefined;
     const result = await deviceGateway.executeMcpCall(
       {
         apiName,
@@ -599,6 +630,7 @@ export class ToolExecutionService {
                 elicitation:
                   context.operationId && context.assistantMessageId
                     ? {
+                        delegation,
                         identity: {
                           apiName,
                           assistantMessageId: context.assistantMessageId,
@@ -607,7 +639,7 @@ export class ToolExecutionService {
                           toolCallId: payload.id,
                           toolMessageId: context.toolMessageId,
                         },
-                        deadline: Date.now() + (context.executionTimeoutMs ?? 60_000),
+                        deadline,
                         workspaceId: context.workspaceId,
                         continuation: context.mcpContinuation,
                       }
@@ -630,6 +662,7 @@ export class ToolExecutionService {
                 elicitation:
                   context.operationId && context.assistantMessageId
                     ? {
+                        delegation,
                         identity: {
                           apiName,
                           assistantMessageId: context.assistantMessageId,
@@ -638,7 +671,7 @@ export class ToolExecutionService {
                           toolCallId: payload.id,
                           toolMessageId: context.toolMessageId,
                         },
-                        deadline: Date.now() + (context.executionTimeoutMs ?? 60_000),
+                        deadline,
                         workspaceId: context.workspaceId,
                         continuation: context.mcpContinuation,
                       }
@@ -661,9 +694,6 @@ export class ToolExecutionService {
             context.workspaceId,
           ).findToolMessageIdByToolCallId(payload.id, context.assistantMessageId)
         : undefined;
-    const checkpoint = (result.state as { mcpInputRequired?: McpElicitationCheckpoint } | undefined)
-      ?.mcpInputRequired;
-    if (checkpoint) throw new McpInputRequiredError(checkpoint);
     if (!result.success) {
       // The device may already be running the call, so never let the retry
       // classifier replay it (see withoutDeviceReplay).

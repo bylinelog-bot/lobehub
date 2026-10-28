@@ -323,8 +323,11 @@ export default class McpCtr extends ControllerModule {
    * one when the pool has no healthy entry. Callers must NOT disconnect the
    * returned client — pooled sessions outlive a single tool call.
    */
-  private async acquireClient(params: MCPClientParams): Promise<MCPClient> {
-    const key = serializeMcpClientParams(params);
+  private async acquireClient(
+    params: MCPClientParams,
+    elicitationEnabled = false,
+  ): Promise<MCPClient> {
+    const key = `${elicitationEnabled ? 'elicitation:' : ''}${serializeMcpClientParams(params)}`;
 
     // Every acquire refreshes the session's idle clock (fire-and-forget —
     // reaping must never delay or fail the tool call it runs alongside).
@@ -341,7 +344,7 @@ export default class McpCtr extends ControllerModule {
     const inFlight = this.mcpClientInitialization?.get(key);
     if (inFlight) return inFlight;
 
-    const creating = this.createClient(params)
+    const creating = this.createClient(params, elicitationEnabled)
       .then((client) => {
         this.mcpClientPool.set(key, client);
         this.mcpClientLastUsedAt.set(key, Date.now());
@@ -403,13 +406,10 @@ export default class McpCtr extends ControllerModule {
    * get its live session killed while the pool keeps pointing at it — a
    * permanently dead pooled entry until restart.
    */
-  private async evictClient(params: MCPClientParams, client?: MCPClient): Promise<void> {
+  private async evictClient(_params: MCPClientParams, client?: MCPClient): Promise<void> {
     if (!client) return;
-    const key = serializeMcpClientParams(params);
-    const pooled = this.mcpClientPool.get(key);
-    // Only evict when the failing call ran on the pooled instance —
-    // a concurrent recreate may have already replaced it.
-    if (pooled && pooled === client) {
+    for (const [key, pooled] of this.mcpClientPool) {
+      if (pooled !== client) continue;
       this.mcpClientPool.delete(key);
       this.mcpClientLastUsedAt.delete(key);
     }
@@ -428,9 +428,9 @@ export default class McpCtr extends ControllerModule {
     }
   }
 
-  private async createClient(params: MCPClientParams) {
+  private async createClient(params: MCPClientParams, elicitationEnabled = false) {
     const { MCPClient } = await loadMcpClient();
-    const client = new MCPClient(params);
+    const client = new MCPClient(params, elicitationEnabled);
     await client.initialize();
     return client;
   }
@@ -666,7 +666,7 @@ export default class McpCtr extends ControllerModule {
       ]);
       if (!serverUrl || !token) throw new Error('MCP completion has no authenticated server');
       if (
-        serverUrl !== owner.serverUrl ||
+        (await config.getRemoteServerUrl()) !== owner.serverUrl ||
         config.getDesktopBootstrapIdentity().userId !== owner.userId
       )
         throw new Error('MCP producer login changed');
@@ -677,7 +677,9 @@ export default class McpCtr extends ControllerModule {
           'Oidc-Auth': token,
           ...(elicitation.workspaceId && { 'X-Workspace-Id': elicitation.workspaceId }),
         },
-        body: JSON.stringify({ json: { identity: elicitation.identity, result } }),
+        body: JSON.stringify({
+          json: { identity: elicitation.identity, delegation: elicitation.delegation, result },
+        }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) throw new Error(`MCP completion relay failed: HTTP ${response.status}`);
@@ -699,10 +701,6 @@ export default class McpCtr extends ControllerModule {
     const serverUrl = await config.getRemoteServerUrl();
     if (!serverUrl) throw new Error('MCP invocation has no server');
     const owner = { userId, serverUrl };
-    const key = JSON.stringify([
-      serverUrl,
-      mcpInvocationKey({ ...elicitation.identity, userId, workspaceId: elicitation.workspaceId }),
-    ]);
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify([serializeMcpClientParams(params), toolName, safeParseToRecord(rawArgs)]),
@@ -710,43 +708,48 @@ export default class McpCtr extends ControllerModule {
       .digest('hex');
     this.mcpInvocations ??= new McpInvocationRegistry();
     this.mcpProducerId ??= randomUUID();
-    return this.mcpInvocations.run(key, fingerprint, elicitation.deadline, async () => {
-      const [serverUrl, token] = await Promise.all([
-        config.getRemoteServerUrl(),
-        config.getAccessToken(),
-      ]);
-      if (!serverUrl || !token) throw new Error('MCP invocation has no authenticated server');
-      if (
-        serverUrl !== owner.serverUrl ||
-        config.getDesktopBootstrapIdentity().userId !== owner.userId
-      )
-        throw new Error('MCP producer login changed');
-      const response = await fetch(`${serverUrl}/trpc/lambda/mcpElicitation.beginProducer`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Oidc-Auth': token,
-          ...(elicitation.workspaceId && { 'X-Workspace-Id': elicitation.workspaceId }),
+    const token = await config.getAccessToken();
+    if (!token) throw new Error('MCP invocation has no authenticated server');
+    if (
+      (await config.getRemoteServerUrl()) !== owner.serverUrl ||
+      config.getDesktopBootstrapIdentity().userId !== owner.userId
+    )
+      throw new Error('MCP producer login changed');
+    const response = await fetch(`${serverUrl}/trpc/lambda/mcpElicitation.beginProducer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Oidc-Auth': token,
+        ...(elicitation.workspaceId && { 'X-Workspace-Id': elicitation.workspaceId }),
+      },
+      body: JSON.stringify({
+        json: {
+          identity: elicitation.identity,
+          delegation: elicitation.delegation,
+          deadline: elicitation.deadline,
+          fingerprint,
+          producerId: this.mcpProducerId,
         },
-        body: JSON.stringify({
-          json: {
-            identity: elicitation.identity,
-            deadline: elicitation.deadline,
-            fingerprint,
-            producerId: this.mcpProducerId,
-          },
-        }),
-        signal: AbortSignal.timeout(
-          Math.max(1, Math.min(15000, elicitation.deadline - Date.now())),
-        ),
-      });
-      const body = (await response.json()) as {
-        result?: { data?: { json?: { claimed?: boolean } } };
-      };
-      if (!response.ok || !body.result?.data?.json?.claimed)
-        throw new Error(
-          'The original MCP invocation is already owned by another producer. Its outcome is unknown; it was not repeated.',
-        );
+      }),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(15000, elicitation.deadline - Date.now()))),
+    });
+    const body = (await response.json()) as {
+      result?: { data?: { json?: { claimed?: boolean; initiatorUserId?: string } } };
+    };
+    if (!response.ok || !body.result?.data?.json?.claimed || !body.result.data.json.initiatorUserId)
+      throw new Error(
+        'The original MCP invocation is already owned by another producer. Its outcome is unknown; it was not repeated.',
+      );
+    const initiatorUserId = body.result.data.json.initiatorUserId;
+    const key = JSON.stringify([
+      serverUrl,
+      mcpInvocationKey({
+        ...elicitation.identity,
+        userId: initiatorUserId,
+        workspaceId: elicitation.workspaceId,
+      }),
+    ]);
+    return this.mcpInvocations.run(key, fingerprint, elicitation.deadline, async () => {
       try {
         const result = await this.runMcpToolOnce(params, toolName, rawArgs, elicitation, owner);
         await this.relayMcpResult(elicitation, result, owner);
@@ -822,6 +825,7 @@ export default class McpCtr extends ControllerModule {
                           body: JSON.stringify({
                             json: {
                               identity: elicitation.identity,
+                              delegation: elicitation.delegation,
                               request,
                               checkpoint,
                               deadline: elicitation.deadline,
@@ -863,7 +867,7 @@ export default class McpCtr extends ControllerModule {
         });
 
       try {
-        return await runOn(await this.acquireClient(params));
+        return await runOn(await this.acquireClient(params, !!elicitation));
       } catch (firstError) {
         const failedClient = (firstError as { ranOnClient?: MCPClient })?.ranOnClient;
         if (!isStaleSessionError(firstError, failedClient?.getProtocolEra())) {
@@ -896,7 +900,7 @@ export default class McpCtr extends ControllerModule {
         // per key, so two concurrent calls that shared the same stale client
         // and both failed build ONE replacement process — not two racing
         // create/set writes that strand the loser (and its established state).
-        const retryClient = await this.acquireClient(params);
+        const retryClient = await this.acquireClient(params, !!elicitation);
         try {
           return await runOn(retryClient);
         } catch (retryError) {

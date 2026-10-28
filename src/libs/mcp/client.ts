@@ -176,7 +176,7 @@ export class MCPClient {
   private transport: Transport;
   private params: MCPClientParams;
 
-  constructor(params: MCPClientParams) {
+  constructor(params: MCPClientParams, elicitationEnabled = false) {
     this.params = params;
     this.mcp = new McpProtocolClient(
       { name: 'lobehub-mcp-client', version: '1.0.0' },
@@ -189,7 +189,7 @@ export class MCPClient {
       },
     );
 
-    this.elicitation = new McpElicitationClient(this.mcp);
+    this.elicitation = new McpElicitationClient(this.mcp, elicitationEnabled);
 
     switch (params.type) {
       case 'http': {
@@ -350,7 +350,7 @@ export class MCPClient {
   }
 
   async disconnect() {
-    await this.mcp.close();
+    await this.elicitation.closeWhenIdle();
     log('MCP connection disconnected.');
   }
 

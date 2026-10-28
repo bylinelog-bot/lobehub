@@ -535,8 +535,8 @@ describe('MCPService', () => {
       expect(result.success).toBe(true);
       expect(mockClient.callTool).toHaveBeenCalledTimes(2);
       // Retry must drop the cached client: first attempt skipCache=false, retry skipCache=true
-      expect(getClientSpy).toHaveBeenNthCalledWith(1, mockParams, false, 'tool');
-      expect(getClientSpy).toHaveBeenNthCalledWith(2, mockParams, true, 'tool');
+      expect(getClientSpy).toHaveBeenNthCalledWith(1, mockParams, false, 'tool:plain');
+      expect(getClientSpy).toHaveBeenNthCalledWith(2, mockParams, true, 'tool:plain');
     });
 
     it('should retry up to 3 times for NoValidSessionId error', async () => {

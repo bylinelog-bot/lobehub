@@ -365,7 +365,7 @@ export class MCPClient {
    */
   private stdioParams?: { args?: string[]; command: string; env?: Record<string, string> };
 
-  constructor(params: MCPClientParams) {
+  constructor(params: MCPClientParams, elicitationEnabled = false) {
     this.mcp = new McpProtocolClient(
       { name: 'lobehub-desktop-mcp-client', version: '1.0.0' },
       {
@@ -375,7 +375,9 @@ export class MCPClient {
       },
     );
 
-    this.elicitation = new McpElicitationClient(this.mcp, true, () => this.disconnect());
+    this.elicitation = new McpElicitationClient(this.mcp, elicitationEnabled, () =>
+      this.disconnect(),
+    );
 
     switch (params.type) {
       case 'http': {
