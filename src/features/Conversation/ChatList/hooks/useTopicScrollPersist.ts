@@ -423,8 +423,24 @@ export const useTopicScrollPersist = ({
     // freshly-mounted VList. A single rAF isn't enough — only the viewport-
     // visible items have laid out by then, and ResizeObserver hasn't reported
     // below-the-fold heights yet.
-    const anchorTarget = (ref: VListHandle) =>
-      ref.getItemOffset(headerOffset + anchorIndex) + (snapshot.anchorOffset ?? 0);
+    const anchorOffset = snapshot.anchorOffset ?? 0;
+    const estimatedTarget = (ref: VListHandle) =>
+      ref.getItemOffset(headerOffset + anchorIndex) + anchorOffset;
+    const findAnchorRow = () =>
+      containerRef?.current?.querySelector<HTMLElement>(`[data-index="${anchorIndex}"]`) ?? null;
+    // Once the anchor row is on screen its laid-out position is the truth;
+    // virtua's offsets still count the unmeasured rows above at their estimate.
+    const anchorTarget = (ref: VListHandle) => {
+      const row = findAnchorRow();
+      const scroller = getScroller();
+      if (!row || !scroller) return estimatedTarget(ref);
+      return (
+        scroller.scrollTop +
+        row.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top +
+        anchorOffset
+      );
+    };
     let attempts = 0;
     const tryScroll = () => {
       if (restoreSequenceRef.current !== restoreSequence) return;
@@ -434,7 +450,7 @@ export const useTopicScrollPersist = ({
         restoringRef.current = false;
         return;
       }
-      const targetOffset = anchorTarget(ref);
+      const targetOffset = estimatedTarget(ref);
       const required = targetOffset + ref.viewportSize;
       const cappedOut = attempts >= RESTORE_MAX_FRAMES;
       if (ref.scrollSize >= required || cappedOut) {
@@ -444,20 +460,43 @@ export const useTopicScrollPersist = ({
           scroller.scrollTop = target;
           lastKnownRef.current = resolvePosition(target, false);
         };
-        aimAt(targetOffset);
-        // Rows above the anchor start at virtua's estimated size; as they are
-        // measured the anchor moves, so keep re-aiming until it holds still.
-        settleScrollTarget({
-          aimAt,
-          initialTarget: targetOffset,
-          isStale: () => restoreSequenceRef.current !== restoreSequence,
-          maxMs: BOTTOM_SETTLE_MAX_MS,
-          onDone: () => finalize(cappedOut),
-          quietMs: BOTTOM_SETTLE_QUIET_MS,
-          readTarget: () => (virtuaRef.current ? anchorTarget(virtuaRef.current) : undefined),
-          scroller,
-          stopEvents: USER_SCROLL_INPUT_EVENTS,
-        });
+        const settleOnAnchor = () => {
+          const ref = virtuaRef.current;
+          if (!ref || restoreSequenceRef.current !== restoreSequence) return;
+          const target = anchorTarget(ref);
+          aimAt(target);
+          // Rows above the anchor start at virtua's estimated size; as they are
+          // measured the anchor moves, so keep re-aiming until it holds still.
+          settleScrollTarget({
+            aimAt,
+            initialTarget: target,
+            isStale: () => restoreSequenceRef.current !== restoreSequence,
+            maxMs: BOTTOM_SETTLE_MAX_MS,
+            onDone: () => finalize(cappedOut),
+            quietMs: BOTTOM_SETTLE_QUIET_MS,
+            readTarget: () => (virtuaRef.current ? anchorTarget(virtuaRef.current) : undefined),
+            scroller,
+            stopEvents: USER_SCROLL_INPUT_EVENTS,
+          });
+        };
+
+        // Aiming more than a viewport into the anchor leaves the anchor row
+        // itself outside virtua's render window, so the aim rests on estimated
+        // heights and a tall reply lands a round late. Chase the row's start
+        // until it renders, then aim from where it actually is.
+        if (anchorOffset <= ref.viewportSize) return settleOnAnchor();
+        let anchorFrames = 0;
+        const revealAnchorRow = () => {
+          if (restoreSequenceRef.current !== restoreSequence) return;
+          const current = virtuaRef.current;
+          if (findAnchorRow() || !current || ++anchorFrames >= RESTORE_MAX_FRAMES) {
+            settleOnAnchor();
+            return;
+          }
+          aimAt(current.getItemOffset(headerOffset + anchorIndex));
+          requestAnimationFrame(revealAnchorRow);
+        };
+        revealAnchorRow();
         return;
       }
       attempts += 1;

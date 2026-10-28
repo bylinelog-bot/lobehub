@@ -521,11 +521,10 @@ describe('useTopicScrollPersist', () => {
         }),
       );
 
-      // 30-frame cap + a few extra for the release rAFs.
-      await advanceFrames(40);
+      // 30-frame cap + a few extra for the release rAFs, then the anchor row reveal.
+      await advanceFrames(80);
 
-      expect(handle.scroller.setScrollTop).toHaveBeenCalledTimes(1);
-      expect(handle.scroller.setScrollTop).toHaveBeenCalledWith(999_999);
+      expect(handle.scroller.setScrollTop).toHaveBeenLastCalledWith(999_999);
     });
 
     it('converges the snapshot to the actual landing position after capping out', async () => {
@@ -867,6 +866,67 @@ describe('useTopicScrollPersist', () => {
 
       expect(handle.scroller.setScrollTop).toHaveBeenCalledWith(30 * ROW_HEIGHT + 40);
       expect(handle.scroller.setScrollTop).not.toHaveBeenCalledWith(100);
+    });
+
+    it('renders a tall anchor row before aiming deep inside it', async () => {
+      saveScrollSnapshot('main_agt_1_tpc_a', {
+        anchorId: 'm30',
+        anchorOffset: 1500,
+        atBottom: false,
+        offset: 7500,
+        savedAt: Date.now(),
+      });
+      const handle = createFakeVList({ scrollSize: 20_000 });
+      handle.scroller.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+      // Virtua under-estimates the unmeasured rows above; the rendered row sits 900px lower.
+      const renderedRow = {
+        getBoundingClientRect: () => ({ top: 30 * ROW_HEIGHT + 900 - handle.scrollOffset }),
+      };
+      let anchorRendered = false;
+      const container = {
+        querySelector: (selector: string) =>
+          anchorRendered && selector === '[data-index="30"]' ? renderedRow : null,
+      } as unknown as HTMLDivElement;
+      renderHook(() =>
+        useTopicScrollPersist({
+          containerRef: { current: container },
+          contextKey: 'main_agt_1_tpc_a',
+          dataSource: ROWS,
+          getScroller: () => handle.scroller,
+          virtuaRef: refOf(handle),
+        }),
+      );
+
+      await advanceFrames(4);
+      expect(handle.scroller.setScrollTop).toHaveBeenCalledWith(30 * ROW_HEIGHT);
+      expect(handle.scroller.setScrollTop).not.toHaveBeenCalledWith(30 * ROW_HEIGHT + 1500);
+
+      anchorRendered = true;
+      await advanceFrames(4);
+      expect(handle.scroller.setScrollTop).toHaveBeenLastCalledWith(30 * ROW_HEIGHT + 900 + 1500);
+    });
+
+    it('still reaches a tall anchor when its row never shows up', async () => {
+      saveScrollSnapshot('main_agt_1_tpc_a', {
+        anchorId: 'm30',
+        anchorOffset: 1500,
+        atBottom: false,
+        offset: 7500,
+        savedAt: Date.now(),
+      });
+      const handle = createFakeVList({ scrollSize: 20_000 });
+      renderHook(() =>
+        useTopicScrollPersist({
+          contextKey: 'main_agt_1_tpc_a',
+          dataSource: ROWS,
+          getScroller: () => handle.scroller,
+          virtuaRef: refOf(handle),
+        }),
+      );
+
+      await advanceFrames(40);
+
+      expect(handle.scroller.setScrollTop).toHaveBeenLastCalledWith(30 * ROW_HEIGHT + 1500);
     });
 
     it('re-aims at the anchor while rows above it are measured', async () => {

@@ -33,6 +33,7 @@ export const settleScrollTarget = ({
   const startedAt = Date.now();
   let lastChangeAt = startedAt;
   let lastTarget = initialTarget;
+  let landedAt = scroller.scrollTop;
   const step = () => {
     if (isStale()) {
       stopListening();
@@ -45,8 +46,12 @@ export const settleScrollTarget = ({
       return;
     }
     const now = Date.now();
-    if (target !== lastTarget) {
+    // Virtua shifts scrollTop on its own as rows above get measured, so a
+    // target that holds still can still be missed. Drift is measured from where
+    // the last aim landed, since a clamped target is never reached.
+    if (target !== lastTarget || Math.abs(scroller.scrollTop - landedAt) > 1) {
       aimAt(target);
+      landedAt = scroller.scrollTop;
       lastTarget = target;
       lastChangeAt = now;
     }
