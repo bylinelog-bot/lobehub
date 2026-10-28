@@ -10,7 +10,8 @@ export const DEFAULT_WAKE_RULES: WakeRules = {
   classifier: { mode: 'enforce', threshold: 0.75 },
   denyChannels: [],
   // Off until the bot has duties: without the text there is nothing to judge a message against.
-  duties: { mode: 'enforce', threshold: 0.8 },
+  // The decision model scores plain feature requests 0.65-0.76, so 0.8 let almost none through.
+  duties: { mode: 'enforce', threshold: 0.65 },
   maxSilentWakes: 3,
   ownerPresenceSeconds: 120,
   scope: 'all',
@@ -64,6 +65,12 @@ const UNTOUCHED_CLASSIFIER_THRESHOLDS = new Set<number>([
   0.5,
   BOT_WAKE_PACE_PRESETS.balanced.classifierThreshold,
 ]);
+
+/**
+ * Duty thresholds the form saved as its default before it moved; the form always saves the field, so
+ * these mean "never tuned" and read as the current default.
+ */
+const UNTOUCHED_DUTY_THRESHOLDS = new Set<number>([0.8]);
 
 /** Spec: a burst is collected for at least 20s, and a run is followed by at least 60s of cooldown. */
 export const MIN_COLLECT_SECONDS = 20;
@@ -493,7 +500,10 @@ export const parseBotWakeSettings = (
     duties: {
       mode: raw.duties?.mode ?? DEFAULT_WAKE_RULES.duties.mode,
       text: raw.duties?.text?.trim().slice(0, MAX_DUTIES_LENGTH) || undefined,
-      threshold: raw.duties?.threshold ?? DEFAULT_WAKE_RULES.duties.threshold,
+      threshold:
+        raw.duties?.threshold === undefined || UNTOUCHED_DUTY_THRESHOLDS.has(raw.duties.threshold)
+          ? DEFAULT_WAKE_RULES.duties.threshold
+          : raw.duties.threshold,
     },
   };
 

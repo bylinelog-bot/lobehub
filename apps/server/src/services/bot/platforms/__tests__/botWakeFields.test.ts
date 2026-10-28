@@ -59,7 +59,7 @@ describe('bot-wake settings fields', () => {
     ]);
   });
 
-  it('give the duties a text area that is off while empty, with a dial from 0.8', () => {
+  it('give the duties a text area that is off while empty, with a dial from 0.65', () => {
     const duties = botWakeFields.find((f) => f.key === BOT_WAKE_SETTING_KEYS.duties)!;
     const threshold = botWakeFields.find((f) => f.key === BOT_WAKE_SETTING_KEYS.dutiesThreshold)!;
 
@@ -67,7 +67,7 @@ describe('bot-wake settings fields', () => {
     expect(duties.rows).toBeGreaterThanOrEqual(8);
     // No default: an untouched form saves no duties, so the bot never steps in on its own.
     expect(duties.default).toBeUndefined();
-    expect(threshold).toMatchObject({ default: 0.8, maximum: 1, minimum: 0, type: 'number' });
+    expect(threshold).toMatchObject({ default: 0.65, maximum: 1, minimum: 0, type: 'number' });
   });
 
   it('are shown by the Discord form', () => {
