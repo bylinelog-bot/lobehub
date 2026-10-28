@@ -207,6 +207,33 @@ describe('message.getTopicPreviews', () => {
     });
   });
 
+  it('carries the question and step timeline when the round is the whole topic', async () => {
+    const topic = await createTopic();
+    await seedToolRound(topic.id, { finished: true });
+    const caller = messageRouter.createCaller(createTestContext(userId));
+
+    const [item] = await caller.getTopicPreviews({ topicIds: [topic.id] });
+
+    if (item.status !== 'ok') throw new Error('expected a preview');
+    const page = await readHeadPage(topic.id);
+    const rendered = resolveConversationTail(page.messages);
+    expect(item.leading).toEqual([page.messages[0]]);
+    expect(item.blocks).toEqual(rendered?.message.children);
+    expect(item.timeline.map((row) => row.id)).toEqual(page.messages.map((row) => row.id));
+  });
+
+  it('leaves out the question when earlier rounds exist', async () => {
+    const topic = await createTopic();
+    await seedSingleReply(topic.id);
+    const caller = messageRouter.createCaller(createTestContext(userId));
+
+    const [item] = await caller.getTopicPreviews({ topicIds: [topic.id] });
+
+    if (item.status !== 'ok') throw new Error('expected a preview');
+    expect(item.leading).toBeNull();
+    expect(item.blocks).toEqual([]);
+  });
+
   it('derives edited files the same way the renderer does over the head page', async () => {
     const topic = await createTopic();
     await seedToolRound(topic.id, { finished: true, writesFile: true });

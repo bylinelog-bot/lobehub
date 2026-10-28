@@ -9,6 +9,7 @@ import {
   type ConversationTailKind,
   findLatestWorkRootOperationId,
   getOperationFinalRootId,
+  parse,
   resolveConversationTail,
 } from '@lobechat/conversation-flow';
 import type { AssistantContentBlock, UIChatMessage, WorkSummaryItem } from '@lobechat/types';
@@ -30,16 +31,28 @@ export const topicPreviewsInputSchema = z.object({
   topicIds: z.array(z.string().min(1)).min(1).max(5),
 });
 
+export interface TopicPreviewTimelineRow {
+  createdAt: Date | number | string;
+  finishType?: string;
+  id: string;
+  updatedAt: Date | number | string;
+}
+
 export type TopicPreviewSkipReason =
   'disabled' | 'notFinalAnswer' | 'notFound' | 'running' | 'unsupported' | 'waitingForHuman';
 
 export type TopicPreviewItem =
   | {
+      blocks: AssistantContentBlock[];
       editedFiles: OperationEditedFile[];
       goals: OperationGoal[];
       kind: ConversationTailKind;
+      // The rows above the answer, sent only when this round is the whole topic:
+      // the list then top-aligns them instead of filling the screen with history.
+      leading: UIChatMessage[] | null;
       message: UIChatMessage;
       status: 'ok';
+      timeline: TopicPreviewTimelineRow[];
       topicId: string;
       topicUpdatedAt: string;
       workRootOperationId: string | null;
@@ -100,6 +113,7 @@ const readTopicPreview = async (
   }
 
   const children = (tail.kind === 'group' ? tail.message.children : undefined) ?? [];
+  const leading = page.nextCursor ? null : parse(page.messages).flatList.slice(0, -1);
   const finalId = tail.kind === 'group' ? children.at(-1)?.id : tail.message.id;
   const message = page.messages.find((item) => item.id === finalId);
   if (!isFinalAnswer(message) || !message) return skipped(topic.id, 'notFinalAnswer');
@@ -112,11 +126,19 @@ const readTopicPreview = async (
   );
 
   return {
+    blocks: children,
     editedFiles: deriveOperationEditedFiles(children, !!workRootOperationId),
     goals: deriveOperationGoals(children),
     kind: tail.kind,
+    leading: leading as UIChatMessage[] | null,
     message,
     status: 'ok',
+    timeline: page.messages.map(({ createdAt, id, metadata, updatedAt }) => ({
+      createdAt,
+      finishType: typeof metadata?.finishType === 'string' ? metadata.finishType : undefined,
+      id,
+      updatedAt,
+    })),
     topicId: topic.id,
     topicUpdatedAt: topic.updatedAt.toISOString(),
     workRootOperationId: workRootOperationId ?? null,

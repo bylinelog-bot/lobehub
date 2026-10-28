@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { TopicPreview } from '@/services/message/topicPreview';
 
-import { groupAnswerProps, resolvePreviewLayout } from './layout';
+import {
+  groupAnswerProps,
+  resolvePreviewLayout,
+  resolvePreviewProcess,
+  resolveWholeTopicLeading,
+} from './layout';
 
 const preview = (overrides: Partial<TopicPreview> = {}): TopicPreview =>
   ({
@@ -15,6 +20,9 @@ const preview = (overrides: Partial<TopicPreview> = {}): TopicPreview =>
     topicUpdatedAt: '2026-10-27T00:00:00.000Z',
     workRootOperationId: null,
     works: [],
+    blocks: [],
+    leading: null,
+    timeline: [],
     ...overrides,
   }) as TopicPreview;
 
@@ -79,5 +87,80 @@ describe('resolvePreviewLayout', () => {
 
     expect(layout.worksAfterActions).toEqual([{ id: 'work_1' }]);
     expect(layout.cardsBelow).toBeUndefined();
+  });
+});
+
+describe('resolvePreviewProcess', () => {
+  const toolBlock = {
+    content: '',
+    id: 'msg_call',
+    tools: [
+      {
+        apiName: 'search',
+        arguments: '{}',
+        id: 'call_1',
+        identifier: 'lobe-web-browsing',
+        result_msg_id: 'msg_result',
+        type: 'builtin',
+      },
+    ],
+  };
+  const answerBlock = { content: 'the final answer', id: 'msg_final' };
+  const timeline = [
+    {
+      createdAt: '2026-10-27T00:00:00.000Z',
+      id: 'msg_call',
+      updatedAt: '2026-10-27T00:00:00.000Z',
+    },
+    {
+      createdAt: '2026-10-27T00:00:01.000Z',
+      id: 'msg_result',
+      updatedAt: '2026-10-27T00:00:04.000Z',
+    },
+    {
+      createdAt: '2026-10-27T00:00:12.000Z',
+      id: 'msg_final',
+      updatedAt: '2026-10-27T00:00:12.000Z',
+    },
+  ];
+
+  it('folds a finished tool round the way the list header does', () => {
+    const process = resolvePreviewProcess(
+      preview({ blocks: [toolBlock, answerBlock] as TopicPreview['blocks'], timeline }),
+    );
+
+    expect(process).toEqual({ durationMs: 12_000, stepCount: 2 });
+  });
+
+  it('has no process header for a plain reply', () => {
+    expect(resolvePreviewProcess(preview({ kind: 'single' }))).toBeUndefined();
+  });
+
+  it('has no process header when the round made no tool calls', () => {
+    expect(
+      resolvePreviewProcess(preview({ blocks: [answerBlock] as TopicPreview['blocks'], timeline })),
+    ).toBeUndefined();
+  });
+});
+
+describe('resolveWholeTopicLeading', () => {
+  const question = { content: 'question', id: 'msg_q', role: 'user' };
+
+  it('draws the question when the round is the whole topic', () => {
+    const leading = [question] as TopicPreview['leading'];
+
+    expect(resolveWholeTopicLeading(preview({ leading }))).toBe(leading);
+  });
+
+  it('keeps the history skeleton when earlier rounds exist', () => {
+    expect(resolveWholeTopicLeading(preview({ leading: null }))).toBeUndefined();
+  });
+
+  it('keeps the history skeleton for a row it cannot draw like the list', () => {
+    const fromBot = { ...question, metadata: { botSender: { name: 'Bot' } } };
+
+    expect(
+      resolveWholeTopicLeading(preview({ leading: [fromBot] as TopicPreview['leading'] })),
+    ).toBeUndefined();
   });
 });
