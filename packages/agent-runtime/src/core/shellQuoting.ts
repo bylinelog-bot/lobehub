@@ -145,15 +145,37 @@ const SHELL_COMPOUND_SYNTAX_WORDS = new Set(['{', '}', '(', ')', 'case', 'esac',
 export const skipShellSyntax = (words: string[], start: number): number => {
   let index = start;
   while (index < words.length) {
-    const word = words[index];
+    // Grouping operators are glued onto the word beside them (`(if`, `(rm`),
+    // so normalize BEFORE dispatching on the reserved-word sets. Skipping this
+    // made `(if rm -rf ~; …)` resolve to the reserved word `if` as a confident
+    // executable — every predicate then returned false while Bash ran the
+    // deletion inside the subshell.
+    const word = stripLeadingGroupingParens(words[index]);
     if (SHELL_RESERVED_COMMAND_PREFIXES.has(word) || SHELL_COMPOUND_SYNTAX_WORDS.has(word)) {
       index++;
       if (word === 'case') {
         // Consume the selector, `in`, and the first arm pattern (`a)`, `a|b)`).
+        // `)` is a shell metacharacter, so the pattern ends mid-token when the
+        // command is glued to it (`case x in x)rm -rf ~`). Keeping `x)rm` as
+        // one word swallowed the executable with the pattern and left
+        // resolution with no words at all. Split at the LAST `)` — an earlier
+        // one can only come from a quoted pattern (`"a)b")`), which reaches
+        // this loop quote-stripped.
         while (index < words.length) {
           const arm = words[index];
-          index++;
-          if (arm.endsWith(')')) break;
+          const close = arm.lastIndexOf(')');
+          if (close === -1) {
+            index++;
+            continue;
+          }
+          const command = stripLeadingGroupingParens(arm.slice(close + 1));
+          if (command.length > 0) {
+            // Keep the executable in the pattern's slot so the caller resolves it.
+            words[index] = command;
+          } else {
+            index++;
+          }
+          break;
         }
       }
       continue;

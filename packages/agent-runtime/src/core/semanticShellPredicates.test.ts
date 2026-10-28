@@ -786,6 +786,49 @@ describe('matchSemanticShellPredicate', () => {
     });
   });
 
+  // Seventeenth review round (codex, PR #19386): two operator-adjacency bypasses.
+  // - `(if …)` — grouping was normalized AFTER reserved-word dispatch, so the
+  //   reserved word arrived as `(if`, missed the reserved set, and was treated
+  //   as a confident executable while Bash ran the body's delete;
+  // - `case x in x)rm …` — `)` is a metacharacter, so the arm pattern ends
+  //   mid-token; the tokenizer kept `x)rm` as one word and the arm loop ate the
+  //   command with it.
+  describe('seventeenth-round review: grouping and case-arm operators are syntax', () => {
+    it.each([
+      '(if rm -rf ~; then true; fi); echo ~',
+      '(if rm -rf /; then true; fi); echo /',
+      '(while rm -rf ~; do break; done)',
+      '(until rm -rf ~; do break; done)',
+      '(if { rm -rf ~; }; then true; fi)',
+    ])('blocks a delete behind grouped reserved words: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    it.each([
+      'case x in x)rm -rf ~;; esac; echo ~',
+      'case x in a)rm -rf /;; esac',
+      'case "$x" in "a)b")rm -rf ~;; esac',
+      'case x in x)rm -rf /;; esac',
+    ])('blocks a delete glued to its case-arm pattern: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    it.each([
+      'case x in x)echo hi;; esac',
+      'case x in x) echo "rm -rf ~";; esac',
+      '(if true; then echo ok; fi)',
+    ])('keeps a harmless grouped or case body allowed: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
+    });
+  });
+
   describe('command substitution containment', () => {
     // Substitution bodies stay embedded inside words rather than splitting the
     // outer command. The predicates above only fire on `rm` as the RESOLVED
