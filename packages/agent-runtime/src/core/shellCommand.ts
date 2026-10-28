@@ -16,7 +16,20 @@
  * - Wrappers (sudo / env / nohup) are unwrapped to expose the real command.
  */
 
-import { decodeAnsiCQuoted, stripGroupingParens, stripLeadingGroupingParens } from './shellQuoting';
+import {
+  decodeAnsiCQuoted,
+  skipShellSyntax,
+  stripGroupingParens,
+  stripLeadingGroupingParens,
+} from './shellQuoting';
+
+/**
+ * Characters that terminate an unquoted shell WORD. A heredoc delimiter is a
+ * single word, so an operator that follows it without whitespace
+ * (`<<EOF>/dev/null`) starts the next token instead of extending the
+ * delimiter.
+ */
+const SHELL_WORD_METACHARACTERS = ['|', '&', ';', '<', '>', '(', ')'];
 
 export interface ShellSegment {
   /**
@@ -95,73 +108,6 @@ export const isUnresolvableCommandWord = (word: string): boolean =>
 export const parameterExpansionOperand = (word: string): string | undefined => {
   const match = /^\$\{[a-z_]\w*:?[-=+]([\S\s]*?)\}?$/i.exec(word);
   return match ? match[1] : undefined;
-};
-
-/**
- * Bash reserved words that introduce a command whose FIRST follower executes:
- * `if CMD; then CMD; else CMD; fi`, `while/until CMD; do CMD; done`. They are
- * shell SYNTAX, not executables — resolving them as the command hides the
- * real one behind them (`then rm -rf /` deleted via `if true; then …`).
- */
-const SHELL_RESERVED_COMMAND_PREFIXES = new Set([
-  'if',
-  'then',
-  'else',
-  'elif',
-  'do',
-  'while',
-  'until',
-]);
-
-/**
- * Compound-command syntax that introduces (rather than is) a command:
- * `{ rm -rf /; }`, `( rm -rf / )`, `case x in a) rm -rf /;; esac`.
- * Resolving these words as the command hides the real one behind them.
- */
-const SHELL_COMPOUND_SYNTAX_WORDS = new Set(['{', '}', '(', ')', 'case', 'esac', 'select', 'in']);
-
-/**
- * Characters that terminate an unquoted shell WORD. A heredoc delimiter is a
- * single word, so an operator that follows it without whitespace
- * (`<<EOF>/dev/null`) starts the next token instead of extending the
- * delimiter.
- */
-const SHELL_WORD_METACHARACTERS = ['|', '&', ';', '<', '>', '(', ')'];
-
-/**
- * Skip leading shell syntax so the real command word can be resolved.
- *
- * `case WORD in PATTERN) COMMAND;; esac` is the awkward shape: the selector
- * and `in` precede the arm, and the arm's PATTERN (which ends in `)`) precedes
- * its COMMAND. Everything up to and including that pattern is syntax and is
- * consumed as a unit — otherwise the selector or the pattern would be mistaken
- * for the command and the deletion behind it would resolve to a confident,
- * unrelated word. A word ending in `)` in the command position is the arm
- * pattern (or a group/subshell close), never an executable.
- */
-const skipShellSyntax = (words: string[], start: number): number => {
-  let index = start;
-  while (index < words.length) {
-    const word = words[index];
-    if (SHELL_RESERVED_COMMAND_PREFIXES.has(word) || SHELL_COMPOUND_SYNTAX_WORDS.has(word)) {
-      index++;
-      if (word === 'case') {
-        // Consume the selector, `in`, and the first arm pattern (`a)`, `a|b)`).
-        while (index < words.length) {
-          const arm = words[index];
-          index++;
-          if (arm.endsWith(')')) break;
-        }
-      }
-      continue;
-    }
-    if (word.endsWith(')')) {
-      index++;
-      continue;
-    }
-    break;
-  }
-  return index;
 };
 
 /**
@@ -1063,6 +1009,15 @@ const resolveCommandWord = (words: string[]): { index: number; name: string } | 
     // part of the executable name: strip it before the wrapper lookup, or
     // `(command` misses the builtin and resolution returns `command`.
     const word = stripLeadingGroupingParens(words[index]);
+    // `!` is reserved negation syntax, not a command: `(! rm -rf ~)` and
+    // `if ! rm -rf ~` both execute `rm`. Resolving the negation made the
+    // segment look like an unrelated confident command (`!`), so every
+    // predicate returned false while the delete still ran. Skip it like any
+    // other shell operator and keep looking for the real command word.
+    if (word === '!') {
+      index++;
+      continue;
+    }
     // Path-qualified wrappers execute identically to bare ones
     // (/usr/bin/sudo rm …). Normalize to basename before lookup.
     const base = commandBasename(word);

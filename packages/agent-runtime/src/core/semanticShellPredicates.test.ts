@@ -758,6 +758,34 @@ describe('matchSemanticShellPredicate', () => {
     });
   });
 
+  describe('sixteenth-round review: negation is syntax, not the command', () => {
+    // `!` negates the exit status; it never becomes argv[0]. Resolving it made
+    // `(! rm -rf ~)` look like an unrelated confident command, so the delete
+    // ran while all three predicates returned false.
+    it.each([
+      '(! rm -rf ~); echo ~',
+      '! rm -rf ~',
+      '! rm -rf /',
+      'if ! rm -rf ~; then echo x; fi',
+      'while ! rm -rf ~; do break; done',
+    ])('blocks a delete behind reserved negation: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    it.each([
+      // Negation alone is not a delete; the negated read-only command is.
+      '! true',
+      '! echo "rm -rf ~"',
+      'if ! git status; then echo dirty; fi',
+    ])('does not flag negation of a harmless command: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
+    });
+  });
+
   describe('command substitution containment', () => {
     // Substitution bodies stay embedded inside words rather than splitting the
     // outer command. The predicates above only fire on `rm` as the RESOLVED

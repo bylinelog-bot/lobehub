@@ -107,3 +107,62 @@ export const decodeAnsiCQuoted = (raw: string, start: number): { end: number; va
   }
   return { end: i, value };
 };
+
+/**
+ * Bash reserved words that introduce a command whose FIRST follower executes:
+ * `if CMD; then CMD; else CMD; fi`, `while/until CMD; do CMD; done`. They are
+ * shell SYNTAX, not executables — resolving them as the command hides the
+ * real one behind them (`then rm -rf /` deleted via `if true; then …`).
+ */
+const SHELL_RESERVED_COMMAND_PREFIXES = new Set([
+  'if',
+  'then',
+  'else',
+  'elif',
+  'do',
+  'while',
+  'until',
+]);
+
+/**
+ * Compound-command syntax that introduces (rather than is) a command:
+ * `{ rm -rf /; }`, `( rm -rf / )`, `case x in a) rm -rf /;; esac`.
+ * Resolving these words as the command hides the real one behind them.
+ */
+const SHELL_COMPOUND_SYNTAX_WORDS = new Set(['{', '}', '(', ')', 'case', 'esac', 'select', 'in']);
+
+/**
+ * Skip leading shell syntax so the real command word can be resolved.
+ *
+ * `case WORD in PATTERN) COMMAND;; esac` is the awkward shape: the selector
+ * and `in` precede the arm, and the arm's PATTERN (which ends in `)`) precedes
+ * its COMMAND. Everything up to and including that pattern is syntax and is
+ * consumed as a unit — otherwise the selector or the pattern would be mistaken
+ * for the command and the deletion behind it would resolve to a confident,
+ * unrelated word. A word ending in `)` in the command position is the arm
+ * pattern (or a group/subshell close), never an executable.
+ */
+export const skipShellSyntax = (words: string[], start: number): number => {
+  let index = start;
+  while (index < words.length) {
+    const word = words[index];
+    if (SHELL_RESERVED_COMMAND_PREFIXES.has(word) || SHELL_COMPOUND_SYNTAX_WORDS.has(word)) {
+      index++;
+      if (word === 'case') {
+        // Consume the selector, `in`, and the first arm pattern (`a)`, `a|b)`).
+        while (index < words.length) {
+          const arm = words[index];
+          index++;
+          if (arm.endsWith(')')) break;
+        }
+      }
+      continue;
+    }
+    if (word.endsWith(')')) {
+      index++;
+      continue;
+    }
+    break;
+  }
+  return index;
+};
