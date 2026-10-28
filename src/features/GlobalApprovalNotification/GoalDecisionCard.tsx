@@ -18,10 +18,9 @@ import {
 } from '@/features/AgentGoals/ProcessControl/coordinatorCopy';
 import { openGoalSignOffModal } from '@/features/AgentGoals/SignOffReport';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
-import { mutate } from '@/libs/swr';
-import { goalKeys } from '@/libs/swr/keys';
 import { useGoalStore } from '@/store/goal';
 
+import { refreshGoalAsks } from './refreshGoalAsks';
 import { styles } from './styles';
 import type { IslandGoalItem } from './usePendingGoalDecisions';
 
@@ -65,10 +64,7 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
     reviewAcceptanceId &&
     openGateReportModal({
       acceptanceId: reviewAcceptanceId,
-      onDecided: () => {
-        void mutate(goalKeys.pendingForIsland());
-        void mutate((key) => Array.isArray(key) && key[0] === 'brief:list');
-      },
+      onDecided: () => void refreshGoalAsks(goal.id),
     });
 
   const openGoal = () =>
@@ -85,11 +81,7 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
       goalTitle: item.signOff.goalTitle,
       // The inbox carries the same sign-off; it is settled on the server with
       // the acceptance, so re-read it there too.
-      onDecided: () =>
-        Promise.all([
-          mutate(goalKeys.pendingForIsland()),
-          mutate((key) => Array.isArray(key) && key[0] === 'brief:list'),
-        ]),
+      onDecided: () => refreshGoalAsks(item.signOff.goalId),
       onOpenGoal: openGoal,
     });
 

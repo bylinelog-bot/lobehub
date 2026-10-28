@@ -54,9 +54,12 @@ const styles = stylex.create({
     paddingBlock: 12,
     paddingInline: 24,
   },
+  // Sized by its content and shrunk to the frame's max height: a zero basis
+  // in a column with no definite height collapses the report to nothing.
   scroll: {
-    flexBasis: 0,
+    flexBasis: 'auto',
     flexGrow: 1,
+    flexShrink: 1,
     minHeight: 0,
     overflowY: 'auto',
     paddingBlock: 24,
@@ -138,7 +141,16 @@ const GoalSignOffReport = ({
             <h3 {...stylex.props(styles.title)}>{goalTitle}</h3>
             <Text type={'secondary'}>{t('goalProcess.result.signOff.prompt')}</Text>
           </Flexbox>
-          {graph ? <DeliveryBody graph={graph} /> : <Skeleton active paragraph={{ rows: 6 }} />}
+          {graph ? (
+            <DeliveryBody graph={graph} />
+          ) : (
+            <Flexbox gap={10}>
+              <Skeleton height={24} radius={4} width={'40%'} />
+              <Skeleton height={320} radius={8} />
+              <Skeleton height={14} radius={4} />
+              <Skeleton height={14} radius={4} width={'70%'} />
+            </Flexbox>
+          )}
         </Flexbox>
       </div>
       <div {...stylex.props(styles.footer)}>
