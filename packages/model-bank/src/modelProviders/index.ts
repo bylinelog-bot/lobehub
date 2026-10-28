@@ -172,6 +172,7 @@ export const DEFAULT_MODEL_PROVIDER_LIST = [
   XiaomiMiMoProvider,
   AiHubMixProvider,
   OpenRouterProvider,
+  TokenLabProvider,
   FalProvider,
   OllamaProvider,
   OllamaCloudProvider,
@@ -234,7 +235,6 @@ export const DEFAULT_MODEL_PROVIDER_LIST = [
   StraicoProvider,
   LongCatProvider,
   MagpieProvider,
-  TokenLabProvider,
   StreamLakeProvider,
   AntGroupProvider,
 ];
