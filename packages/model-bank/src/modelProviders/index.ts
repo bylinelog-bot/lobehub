@@ -73,6 +73,7 @@ import SuperGrokProvider from './superGrok';
 import TaichuProvider from './taichu';
 import TencentcloudProvider from './tencentcloud';
 import TogetherAIProvider from './togetherai';
+import TokenLabProvider from './tokenlab';
 import { TypeSafeProvider } from './typesafe';
 import UnslothProvider from './unsloth';
 import UpstageProvider from './upstage';
@@ -233,6 +234,7 @@ export const DEFAULT_MODEL_PROVIDER_LIST = [
   StraicoProvider,
   LongCatProvider,
   MagpieProvider,
+  TokenLabProvider,
   StreamLakeProvider,
   AntGroupProvider,
 ];
@@ -377,6 +379,7 @@ export { default as SuperGrokProviderCard } from './superGrok';
 export { default as TaichuProviderCard } from './taichu';
 export { default as TencentCloudProviderCard } from './tencentcloud';
 export { default as TogetherAIProviderCard } from './togetherai';
+export { default as TokenLabProviderCard } from './tokenlab';
 export { default as UnslothProviderCard } from './unsloth';
 export { default as UpstageProviderCard } from './upstage';
 export { default as V0ProviderCard } from './v0';
