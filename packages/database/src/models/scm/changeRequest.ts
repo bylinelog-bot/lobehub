@@ -488,6 +488,8 @@ export class ScmChangeRequestModel {
             const adopted = held && held.sha === params.headSha ? held.checks : null;
             return {
               checks: adopted,
+              // `headChanged` already requires a truthy `params.headSha`, so the fallback never runs.
+              /* v8 ignore next */
               ciHeadSha: params.headSha ?? null,
               ciStatus: adopted ? rollupCiStatus(adopted) : null,
             };
