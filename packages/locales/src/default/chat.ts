@@ -2665,15 +2665,13 @@ export default {
   'goalProcess.decision.effect.releaseBatch':
     'Release the next wave on the current recipe. Each later wave goes to the main Agent, which releases it or brings it back to you.',
   'goalProcess.signOff.islandSubtitle': 'is done and waiting for your sign-off',
-  'goalProcess.signOff.question': 'Do you accept what this goal delivered?',
+  'goalProcess.signOff.islandSummary':
+    'Goal-level acceptance passed. Read the delivery report, then sign off or request changes.',
+  'goalProcess.signOff.openReport': 'Review delivery',
   'goalProcess.signOff.description': 'Goal-level acceptance passed. Your sign-off closes the goal.',
   'goalProcess.signOff.accept': 'Sign off',
   'goalProcess.signOff.acceptEffect': 'Close the goal as delivered.',
   'goalProcess.signOff.requestChanges': 'Request changes',
-  'goalProcess.signOff.requestChangesEffect':
-    'Send it back to the Agent. Say what to change in the notes.',
-  'goalProcess.signOff.notePlaceholder':
-    'What should change? The Agent reworks the delivery with this.',
   'goalProcess.signOff.accepted': 'Signed off',
   'goalProcess.signOff.sentBack': 'Sent back for changes',
   'goalProcess.gate.title.agentQuestion': "Answer the main Agent's question",
