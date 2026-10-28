@@ -1,5 +1,5 @@
 import type { LobeChatDatabase } from '@lobechat/database';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { MessageModel } from '@/database/models/message';
 import { TopicModel } from '@/database/models/topic';
@@ -32,7 +32,8 @@ export class TopicReferenceService {
 
   /**
    * Whether `topicId` is the conversation `conversationTopicId` itself, or one a user message
-   * in it names — as a bare id or inside a `<refer_topic>` tag, markdown-escaped (`tpc\_…`)
+   * in its main conversation names — as a bare id or inside a `<refer_topic>` tag,
+   * markdown-escaped (`tpc\_…`)
    * or not. The id has to stand on its own: one that only starts a longer id does not count.
    */
   isNamedInConversation = async (conversationTopicId: string, topicId: string) => {
@@ -48,6 +49,9 @@ export class TopicReferenceService {
         and(
           eq(messages.topicId, conversationTopicId),
           eq(messages.role, 'user'),
+          // Ingest persists agent-authored subagent prompts as `user` messages
+          // in threads. They are not user authorization to read another topic.
+          isNull(messages.threadId),
           buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, messages),
           sql`${messages.content} ~ ${pattern}`,
         ),

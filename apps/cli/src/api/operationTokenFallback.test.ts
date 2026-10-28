@@ -4,7 +4,9 @@ import type { AnyRouter } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getValidToken } from '../auth/refresh';
+import type * as RefreshModule from '../auth/refresh';
+import type { TokenLookup } from '../auth/refresh';
+import { describeTokenLookup, getValidToken } from '../auth/refresh';
 import { log } from '../utils/logger';
 import {
   isOperationToken,
@@ -13,7 +15,10 @@ import {
   operationTokenHeaders,
 } from './operationTokenFallback';
 
-vi.mock('../auth/refresh', () => ({ getValidToken: vi.fn() }));
+vi.mock('../auth/refresh', async (importOriginal) => ({
+  ...(await importOriginal<typeof RefreshModule>()),
+  getValidToken: vi.fn(),
+}));
 vi.mock('../utils/logger', () => ({ log: { debug: vi.fn(), warn: vi.fn() } }));
 
 const jwt = (payload: Record<string, unknown>) =>
@@ -109,6 +114,38 @@ describe('operation token fallback', () => {
 
     await expect(query(userScopedRoute)).rejects.toThrow(OPERATION_TOKEN_REFUSAL);
     expect(userScopedRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { detail: 'HTTP 502', status: 'unavailable' },
+    { detail: 'invalid_client', status: 'refused' },
+    { detail: 'invalid_grant', status: 'spent' },
+  ] satisfies TokenLookup[])(
+    'explains a $status refresh failure without retrying',
+    async (result) => {
+      vi.mocked(getValidToken).mockResolvedValue(result);
+      const report = describeTokenLookup(result)!;
+
+      await expect(query(userScopedRoute)).rejects.toThrow(OPERATION_TOKEN_REFUSAL);
+      expect(userScopedRoute).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(`${report.detail} ${report.fix}`);
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('no stored login of the same account'),
+      );
+    },
+  );
+
+  it('reports unexpected credential lookup errors instead of claiming there is no login', async () => {
+    vi.mocked(getValidToken).mockRejectedValue(new Error('credential store unavailable'));
+
+    await expect(query(userScopedRoute)).rejects.toThrow(OPERATION_TOKEN_REFUSAL);
+    expect(userScopedRoute).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Could not look up the stored login'),
+    );
+    expect(log.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('no stored login of the same account'),
+    );
   });
 
   it('does not retry other authentication errors', async () => {

@@ -2,9 +2,16 @@
 import { type LobeChatDatabase } from '@lobechat/database';
 import { messages, topics, users, workspaces } from '@lobechat/database/schemas';
 import { getTestDB } from '@lobechat/database/test-utils';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MessageModel } from '@/database/models/message';
+import { ThreadModel } from '@/database/models/thread';
+import { TopicModel } from '@/database/models/topic';
+import {
+  __resetOperationStatesForTesting,
+  HeterogeneousPersistenceHandler,
+} from '@/server/services/heterogeneousAgent/HeterogeneousPersistenceHandler';
 import { HeteroOperationPrincipalError } from '@/server/services/heterogeneousAgent/operationPrincipal';
 
 import { topicRouter } from '../../topic';
@@ -55,6 +62,7 @@ describe('topic.getTopicTranscriptOperation', () => {
   beforeEach(async () => {
     testDB = await getTestDB();
     vi.clearAllMocks();
+    __resetOperationStatesForTesting();
     mockResolve.mockResolvedValue({
       operationId: 'op_read_1',
       topicId: conversation,
@@ -95,6 +103,7 @@ describe('topic.getTopicTranscriptOperation', () => {
   });
 
   afterEach(async () => {
+    __resetOperationStatesForTesting();
     await testDB.delete(users).where(inArray(users.id, [runUser]));
     await testDB.delete(workspaces).where(inArray(workspaces.id, [workspace]));
   });
@@ -148,6 +157,91 @@ describe('topic.getTopicTranscriptOperation', () => {
     await expect(
       callerWith(operationClaims).getTopicTranscriptOperation({ topicId: 'tpc_doesNotExist' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('does not grant topic access from an ingested subagent prompt', async () => {
+    const topicId = 'tpc_opReadOther1';
+    const caller = callerWith(operationClaims);
+    await expect(caller.getTopicTranscriptOperation({ topicId })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+
+    const topicModel = new TopicModel(testDB, runUser, workspace);
+    await testDB.insert(messages).values({
+      content: '',
+      id: 'op-read-assistant',
+      parentId: 'op-read-ask',
+      role: 'assistant',
+      topicId: conversation,
+      userId: runUser,
+      workspaceId: workspace,
+    });
+    await topicModel.updateMetadata(conversation, {
+      runningOperation: {
+        assistantMessageId: 'op-read-assistant',
+        operationId: operationClaims.operation_id,
+        startedAt: new Date().toISOString(),
+        type: 'execAgent',
+      },
+    });
+    const handler = new HeterogeneousPersistenceHandler({
+      messageModel: new MessageModel(testDB, runUser, workspace),
+      threadModel: new ThreadModel(testDB, runUser, workspace),
+      topicModel,
+      userId: runUser,
+      workspaceId: workspace,
+    });
+    await handler.ingest({
+      events: [
+        {
+          data: {
+            chunkType: 'text',
+            content: 'Starting the delegated task',
+            subagent: {
+              parentToolCallId: 'op-read-subagent-call',
+              spawnMetadata: { prompt: `Read ${topicId}`, subagentType: 'Explore' },
+              subagentMessageId: 'op-read-subagent-message',
+            },
+          },
+          operationId: operationClaims.operation_id,
+          stepIndex: 0,
+          timestamp: Date.now(),
+          type: 'stream_chunk',
+        },
+      ],
+      operationId: operationClaims.operation_id,
+      topicId: conversation,
+    });
+
+    // Prove the real ingest persistence path wrote the synthetic user message.
+    expect(
+      await testDB
+        .select({ content: messages.content })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.topicId, conversation),
+            eq(messages.role, 'user'),
+            isNotNull(messages.threadId),
+          ),
+        ),
+    ).toEqual([{ content: `Read ${topicId}` }]);
+    await expect(caller.getTopicTranscriptOperation({ topicId })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+
+    // A real user reference in the main conversation can still grant access.
+    await testDB.insert(messages).values({
+      content: `Please read ${topicId}`,
+      id: 'op-read-user-authorizes',
+      role: 'user',
+      topicId: conversation,
+      userId: runUser,
+      workspaceId: workspace,
+    });
+    await expect(caller.getTopicTranscriptOperation({ topicId })).resolves.toMatchObject({
+      topic: { id: topicId },
+    });
   });
 
   it('refuses an operation that has no conversation', async () => {

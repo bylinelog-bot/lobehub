@@ -3,7 +3,7 @@ import { isTRPCClientError } from '@trpc/client';
 import type { AnyRouter } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 
-import { getValidToken } from '../auth/refresh';
+import { describeTokenLookup, getValidToken } from '../auth/refresh';
 import { parseJwtPayload } from '../auth/source';
 import { log } from '../utils/logger';
 
@@ -54,13 +54,22 @@ export const isOperationTokenRefusal = (error: unknown): boolean =>
  * The stored login, when it is usable and belongs to the operation token's own
  * account.
  */
-const storedLoginFor = async (operationToken: string): Promise<string | undefined> => {
-  const result = await getValidToken().catch(() => undefined);
-  if (result?.status !== 'ok') return;
+const storedLoginFor = async (
+  operationToken: string,
+): Promise<{ token: string } | { warning: string }> => {
+  const result = await getValidToken();
+  if (result.status === 'ok') {
+    const owner = subjectOf(operationToken);
+    const stored = result.credentials.accessToken;
+    if (owner && subjectOf(stored) === owner) return { token: stored };
+  }
 
-  const owner = subjectOf(operationToken);
-  const stored = result.credentials.accessToken;
-  return owner && subjectOf(stored) === owner ? stored : undefined;
+  const report = describeTokenLookup(result);
+  return {
+    warning: report
+      ? `${report.detail} ${report.fix}`
+      : "LOBEHUB_JWT is this run's operation token, which this endpoint refuses, and this machine has no stored login of the same account to use instead.",
+  };
 };
 
 /**
@@ -81,21 +90,27 @@ export const operationTokenFallbackLink =
             observer.error(error);
             return;
           }
-          void storedLoginFor(operationToken()).then((stored) => {
-            if (closed) return;
-            if (!stored) {
+          void storedLoginFor(operationToken())
+            .then((lookup) => {
+              if (closed) return;
+              if ('warning' in lookup) {
+                log.warn(lookup.warning);
+                observer.error(error);
+                return;
+              }
+              log.debug(`${op.path}: operation token refused, retrying with the stored login`);
+              subscription = next({
+                ...op,
+                context: { ...op.context, [STORED_LOGIN]: lookup.token },
+              }).subscribe(observer);
+            })
+            .catch((lookupError: unknown) => {
+              if (closed) return;
               log.warn(
-                "LOBEHUB_JWT is this run's operation token, which this endpoint refuses, and this machine has no stored login of the same account to use instead.",
+                `Could not look up the stored login: ${lookupError instanceof Error ? lookupError.message : String(lookupError)}`,
               );
               observer.error(error);
-              return;
-            }
-            log.debug(`${op.path}: operation token refused, retrying with the stored login`);
-            subscription = next({
-              ...op,
-              context: { ...op.context, [STORED_LOGIN]: stored },
-            }).subscribe(observer);
-          });
+            });
         },
         next: (value) => observer.next(value),
       });
