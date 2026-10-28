@@ -15,7 +15,15 @@
  * are still registered as `trash_items` children so a restore / purge of the
  * root can find them, but the UI never lists them on their own.
  */
-export const TRASH_RESOURCE_TYPES = ['agent', 'topic', 'message'] as const;
+export const TRASH_RESOURCE_TYPES = [
+  'agent',
+  'topic',
+  'message',
+  'widget',
+  'dashboard',
+  'channel',
+  'channelThread',
+] as const;
 export type TrashResourceType = (typeof TRASH_RESOURCE_TYPES)[number];
 
 /**
@@ -65,16 +73,33 @@ export interface TrashItem {
   workspaceId: string | null;
 }
 
-export interface TrashListParams {
-  cursor?: string | null;
+/**
+ * Project filter over the project recorded when a root was first trashed
+ * (`trash_items.project_id`):
+ *
+ * - `undefined` — every root, whatever its project (including projects that
+ *   have since been deleted).
+ * - `null` — only roots recorded without a project: agents, project-less
+ *   topics / messages, and rows trashed before project context was captured.
+ * - a project id — only roots recorded under that project.
+ */
+export type TrashProjectFilter = string | null | undefined;
+
+/** Filters shared by the recycle-bin list, its counts and "empty trash". */
+export interface TrashRootFilter {
   /**
    * Only roots this user trashed. Set server-side for workspace non-owners, so
    * a member never sees titles of teammates' resources (a message root's title
    * is a content excerpt).
    */
   deletedByUserId?: string;
-  limit?: number;
+  projectId?: TrashProjectFilter;
   resourceType?: TrashResourceType;
+}
+
+export interface TrashListParams extends TrashRootFilter {
+  cursor?: string | null;
+  limit?: number;
 }
 
 export interface TrashListResult {
@@ -93,5 +118,10 @@ export const TRASH_RESTORE_ERROR_CODES = [
   'notFound',
   /** A parent of the row is itself in the trash — restore that root first. */
   'parentTrashed',
+  /**
+   * A live row has taken the slot this one would return to (a new Channel thread on the
+   * same message) — it cannot come back without displacing that row.
+   */
+  'conflict',
 ] as const;
 export type TrashRestoreErrorCode = (typeof TRASH_RESTORE_ERROR_CODES)[number];

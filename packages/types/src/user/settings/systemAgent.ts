@@ -18,6 +18,8 @@ export interface UserSystemAgentConfig {
    * depends on transcription stays hidden.
    */
   asr: SystemAgentItem;
+  /** Decision model selecting which Channel members should respond to an unmentioned message. */
+  channelRouting: SystemAgentItem;
   /** Model used to draft expertise domains and extract reusable experience from conversations. */
   expertise: SystemAgentItem;
   followUpAction: SystemAgentItem;
@@ -50,3 +52,16 @@ export interface UserServiceModelConfig
 export type UserSystemAgentConfigKey = keyof UserSystemAgentConfig;
 export type UserMemoryServiceModelConfigKey = keyof UserMemoryServiceModelConfig;
 export type UserServiceModelConfigKey = keyof UserServiceModelConfig;
+
+/**
+ * Service-model entries that only shape the user's own chat surface (their
+ * input box and the chips under replies). They stay personal preferences even
+ * inside a workspace: every member may change them, unlike the rest of
+ * `systemAgent`, which requires workspace settings permission there.
+ */
+export const PERSONAL_SYSTEM_AGENT_KEYS = [
+  'followUpAction',
+  'inputCompletion',
+] as const satisfies readonly UserSystemAgentConfigKey[];
+
+export type PersonalSystemAgentKey = (typeof PERSONAL_SYSTEM_AGENT_KEYS)[number];

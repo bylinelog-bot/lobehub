@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { cacheScope } from '@/libs/replica';
 import { taskService } from '@/services/task';
 import { useUserStore } from '@/store/user';
 
 import { useTaskStore } from '../../store';
+import { taskDetailResource } from '../detail/projection';
+import { taskDetailRefreshes } from '../detail/testUtils';
 
 vi.mock('@/services/task', () => ({
   taskService: {
+    find: vi.fn(),
     markBriefRead: vi.fn(),
     resolveBrief: vi.fn(),
     runReview: vi.fn(),
@@ -23,7 +27,7 @@ vi.mock('@/libs/swr', () => ({
   useClientDataSWR: vi.fn(),
 }));
 
-vi.mock('@lobehub/ui/base-ui', async (importOriginal) => ({
+vi.mock('@lobehub/ui', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ...(await import('~base-ui-stubs')).baseUiStubs,
 }));
@@ -37,13 +41,53 @@ const mockDetail = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(taskService.find).mockImplementation(
+    async (id) => ({ data: { id, identifier: id }, success: true }) as never,
+  );
   useTaskStore.setState({
     activeTaskId: 'T-1',
+    taskRefIndex: {},
     taskDetailMap: { 'T-1': { ...mockDetail } },
   });
 });
 
 describe('TaskConfigSliceAction', () => {
+  describe('persisting config-only saves', () => {
+    const persisted = async (scope: string) =>
+      (await taskDetailResource.storage!.get({ queryKey: 'T-1', scope }))?.data;
+
+    const useScope = () => {
+      const scope = `task-config-${crypto.randomUUID()}:personal`;
+      vi.spyOn(cacheScope, 'get').mockReturnValue(scope);
+      vi.spyOn(cacheScope, 'canPersist').mockReturnValue(true);
+      return scope;
+    };
+
+    it('persists a saved model change so a reload paints it', async () => {
+      const scope = useScope();
+      vi.mocked(taskService.updateConfig).mockResolvedValue({ success: true } as any);
+
+      await useTaskStore.getState().updateTaskModelConfig('T-1', { model: 'gpt-x' });
+
+      await vi.waitFor(async () =>
+        expect((await persisted(scope))?.config).toMatchObject({ model: 'gpt-x' }),
+      );
+      vi.restoreAllMocks();
+    });
+
+    it('persists the automation mode once the toggle is saved', async () => {
+      const scope = useScope();
+      vi.mocked(taskService.update).mockResolvedValue({ success: true } as any);
+
+      await useTaskStore.getState().setAutomationMode('T-1', 'heartbeat');
+
+      await vi.waitFor(async () =>
+        expect((await persisted(scope))?.automationMode).toBe('heartbeat'),
+      );
+      vi.restoreAllMocks();
+    });
+  });
+
   describe('updateCheckpoint', () => {
     it('should optimistically update and call service', async () => {
       vi.mocked(taskService.updateCheckpoint).mockResolvedValue({ success: true } as any);
@@ -84,8 +128,7 @@ describe('TaskConfigSliceAction', () => {
     });
 
     it('rolls back and marks the save failed when the PUT rejects', async () => {
-      const { mutate } = await import('@/libs/swr');
-      const { toast } = await import('@lobehub/ui/base-ui');
+      const { toast } = await import('@lobehub/ui');
       vi.mocked(taskService.updateCheckpoint).mockRejectedValue(new Error('fail'));
 
       await useTaskStore.getState().updateCheckpoint('T-1', { onAgentRequest: true });
@@ -97,23 +140,20 @@ describe('TaskConfigSliceAction', () => {
       });
       expect(useTaskStore.getState().taskSaveStatusMap['T-1']).toBe('failed');
       expect(toast.error).toHaveBeenCalled();
-      const refreshes = vi
-        .mocked(mutate)
-        .mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === 'task:detail');
+      const refreshes = taskDetailRefreshes('T-1');
       expect(refreshes).toHaveLength(0);
     });
   });
 
   describe('updateReview', () => {
     it('should call service and refresh detail', async () => {
-      const { mutate } = await import('@/libs/swr');
       vi.mocked(taskService.updateReview).mockResolvedValue({ success: true } as any);
 
       const review = { enabled: true, rubrics: [] };
       await useTaskStore.getState().updateReview('T-1', review as any);
 
       expect(taskService.updateReview).toHaveBeenCalledWith({ id: 'T-1', review });
-      expect(mutate).toHaveBeenCalledWith(['task:detail', 'T-1']);
+      expect(taskDetailRefreshes('T-1')).not.toHaveLength(0);
     });
   });
 
@@ -205,7 +245,6 @@ describe('TaskConfigSliceAction', () => {
 
   describe('runReview', () => {
     it('should call service and refresh detail', async () => {
-      const { mutate } = await import('@/libs/swr');
       const mockResult = { overallScore: 85, passed: true };
       vi.mocked(taskService.runReview).mockResolvedValue({
         data: mockResult,
@@ -215,7 +254,7 @@ describe('TaskConfigSliceAction', () => {
       const result = await useTaskStore.getState().runReview('T-1', { content: 'Test output' });
 
       expect(taskService.runReview).toHaveBeenCalledWith('T-1', { content: 'Test output' });
-      expect(mutate).toHaveBeenCalledWith(['task:detail', 'T-1']);
+      expect(taskDetailRefreshes('T-1')).not.toHaveLength(0);
       expect(result).toEqual({ data: mockResult, success: true });
     });
 
@@ -230,7 +269,6 @@ describe('TaskConfigSliceAction', () => {
 
   describe('updateTaskModelConfig', () => {
     it('should call updateConfig with model/provider and never refetch', async () => {
-      const { mutate } = await import('@/libs/swr');
       vi.mocked(taskService.updateConfig).mockResolvedValue({ success: true } as any);
 
       await useTaskStore
@@ -248,9 +286,7 @@ describe('TaskConfigSliceAction', () => {
       expect(useTaskStore.getState().taskSaveStatusMap['T-1']).toBe('saved');
       // A refresh here is an async write that could land after the user's next
       // run-location pick and replace it.
-      const refreshes = vi
-        .mocked(mutate)
-        .mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === 'task:detail');
+      const refreshes = taskDetailRefreshes('T-1');
       expect(refreshes).toHaveLength(0);
     });
 
@@ -309,7 +345,6 @@ describe('TaskConfigSliceAction', () => {
       useTaskStore.getState().taskDetailMap[id].config?.execution as Record<string, unknown>;
 
     it('serializes rapid device + directory edits, keeps the last one, and never refetches', async () => {
-      const { mutate } = await import('@/libs/swr');
       const settlers: Array<() => void> = [];
       vi.mocked(taskService.updateConfig).mockImplementation(
         () =>
@@ -365,14 +400,12 @@ describe('TaskConfigSliceAction', () => {
         workingDirectoryConfig: null,
       });
 
-      const refreshes = vi
-        .mocked(mutate)
-        .mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === 'task:detail');
+      const refreshes = taskDetailRefreshes('T-1');
       expect(refreshes).toHaveLength(0);
     });
 
     it('rolls the optimistic patch back, marks the save failed, and offers a retry', async () => {
-      const { toast } = await import('@lobehub/ui/base-ui');
+      const { toast } = await import('@lobehub/ui');
       useTaskStore.setState({
         taskDetailMap: {
           'T-1': {
@@ -419,13 +452,12 @@ describe('TaskConfigSliceAction', () => {
 
   describe('updatePeriodicInterval', () => {
     it('should call update with heartbeatInterval and refresh detail', async () => {
-      const { mutate } = await import('@/libs/swr');
       vi.mocked(taskService.update).mockResolvedValue({ success: true } as any);
 
       await useTaskStore.getState().updatePeriodicInterval('T-1', 600);
 
       expect(taskService.update).toHaveBeenCalledWith('T-1', { heartbeatInterval: 600 });
-      expect(mutate).toHaveBeenCalledWith(['task:detail', 'T-1']);
+      expect(taskDetailRefreshes('T-1')).not.toHaveLength(0);
     });
 
     it('should send 0 when null to disable interval (automationMode untouched)', async () => {
@@ -562,7 +594,6 @@ describe('TaskConfigSliceAction', () => {
     });
 
     it('serializes rapid toggles, applies optimistic state immediately, and never refreshes', async () => {
-      const { mutate } = await import('@/libs/swr');
       // Macrotask flush — drains the microtask queue, enough for
       // OptimisticEngine to resolve the previous PUT, run its post-await
       // steps, and synchronously kick off the next mutation's PUT.
@@ -609,9 +640,7 @@ describe('TaskConfigSliceAction', () => {
       // Final store still matches the last click — no stale SWR refresh can
       // race-overwrite it back to schedule/heartbeat mid-stream.
       expect(useTaskStore.getState().taskDetailMap['T-1'].automationMode).toBe('schedule');
-      const refreshCalls = vi
-        .mocked(mutate)
-        .mock.calls.filter((c) => Array.isArray(c[0]) && c[0][0] === 'task:detail');
+      const refreshCalls = taskDetailRefreshes('T-1');
       expect(refreshCalls).toHaveLength(0);
     });
 
@@ -772,7 +801,6 @@ describe('TaskConfigSliceAction', () => {
 
   describe('updateSchedule', () => {
     it('mirrors pattern, timezone, and maxExecutions into the local detail and PUTs the flat shape', async () => {
-      const { mutate } = await import('@/libs/swr');
       vi.mocked(taskService.update).mockResolvedValue({ success: true } as any);
 
       await useTaskStore.getState().updateSchedule('T-1', {
@@ -794,9 +822,7 @@ describe('TaskConfigSliceAction', () => {
         scheduleTimezone: 'Asia/Shanghai',
       });
       // No SWR refresh — optimistic patch is the source of truth.
-      const refreshCalls = vi
-        .mocked(mutate)
-        .mock.calls.filter((c) => Array.isArray(c[0]) && c[0][0] === 'task:detail');
+      const refreshCalls = taskDetailRefreshes('T-1');
       expect(refreshCalls).toHaveLength(0);
     });
 
@@ -893,25 +919,23 @@ describe('TaskConfigSliceAction', () => {
 
   describe('resolveBrief', () => {
     it('should call service and refresh active detail', async () => {
-      const { mutate } = await import('@/libs/swr');
       vi.mocked(taskService.resolveBrief).mockResolvedValue({ success: true } as any);
 
       await useTaskStore.getState().resolveBrief('brief_1', { action: 'approve' });
 
       expect(taskService.resolveBrief).toHaveBeenCalledWith('brief_1', { action: 'approve' });
-      expect(mutate).toHaveBeenCalledWith(['task:detail', 'T-1']);
+      expect(taskDetailRefreshes('T-1')).not.toHaveLength(0);
     });
   });
 
   describe('markBriefRead', () => {
     it('should call service and refresh active detail', async () => {
-      const { mutate } = await import('@/libs/swr');
       vi.mocked(taskService.markBriefRead).mockResolvedValue({ success: true } as any);
 
       await useTaskStore.getState().markBriefRead('brief_1');
 
       expect(taskService.markBriefRead).toHaveBeenCalledWith('brief_1');
-      expect(mutate).toHaveBeenCalledWith(['task:detail', 'T-1']);
+      expect(taskDetailRefreshes('T-1')).not.toHaveLength(0);
     });
   });
 });

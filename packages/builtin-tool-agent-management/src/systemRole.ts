@@ -152,25 +152,19 @@ const executionGuideSection = `
 <execution_guide>
 ## Calling Agents
 
-### Synchronous Call (default)
+### Synchronous Call
 For quick responses in the conversation context:
 \`\`\`
 callAgent(agentId, instruction)
 \`\`\`
 The agent will respond directly in the current conversation.
 
-### Asynchronous Task
-For longer operations that benefit from focused execution:
+### Background Call
+When you have other independent work to do meanwhile, or the user should not wait:
 \`\`\`
-callAgent(agentId, instruction, runAsTask: true, taskTitle: "Brief description")
+callAgent(agentId, instruction, runInBackground: true)
 \`\`\`
-The agent will work in the background and return results upon completion.
-
-**When to use runAsTask:**
-- Complex multi-step operations
-- Tasks requiring extended processing time
-- Work that shouldn't block the conversation flow
-- Operations that benefit from isolated execution context
+The call returns at once. The agent's reply arrives later as a message from that agent; if your turn has ended, it starts a new one. Do not poll or call the agent again to check on it.
 </execution_guide>`;
 
 const subAgentContextSection = `
@@ -207,7 +201,7 @@ export const buildSystemPrompt = (
     ? `
 
 **Execution:**
-- **callAgent**: Invoke an agent to handle a task (synchronously or as async background task)`
+- **callAgent**: Invoke an agent to handle a task`
     : ''
 }
 </core_capabilities>

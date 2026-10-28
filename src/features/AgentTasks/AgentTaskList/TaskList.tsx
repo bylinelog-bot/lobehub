@@ -1,13 +1,16 @@
-import { Block, Center, Empty, Flexbox } from '@lobehub/ui';
 import {
   AccordionHeader,
   AccordionItem,
   AccordionRoot,
   AccordionTrigger,
+  Block,
+  Center,
+  cssVar,
   Divider,
+  Empty,
+  Flexbox,
   Text,
-} from '@lobehub/ui/base-ui';
-import { cssVar } from 'antd-style';
+} from '@lobehub/ui';
 import { ClipboardCheckIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
@@ -29,7 +32,7 @@ import {
   collapseSubTasks,
   compareTaskItems,
   groupTaskItems,
-  HIDDEN_WHEN_COMPLETED_STATUSES,
+  isTaskHiddenByCompletedFilter,
 } from './listViewOptions';
 import TaskGroupLabel from './TaskGroupLabel';
 import TaskItemSkeleton from './TaskItemSkeleton';
@@ -40,12 +43,13 @@ import { useClosestScrollParent } from './useClosestScrollParent';
 
 interface TaskListProps {
   /**
-   * Settled signal — truthy once the current scope's list has loaded into the
-   * store, `undefined` while unsettled. Derived from the store's
-   * `isTaskListInit` (not raw SWR `data`) so it resets in lockstep with `tasks`
-   * on a scope/visibility switch and never disagrees with the empty signal.
+   * Settled signal — truthy once the list behind `queryKey` has a value in the
+   * store, `undefined` while unsettled. Derived from the same entry as the rows,
+   * so it never disagrees with the empty signal.
    */
   data?: unknown;
+  /** Call to action under the empty state, e.g. creating the collection's first task. */
+  emptyAction?: ReactNode;
   emptyDescription?: string;
   /** Thrown error from the list SWR — surfaced as a failure state, not a skeleton. */
   error?: unknown;
@@ -56,10 +60,10 @@ interface TaskListProps {
   onRetry?: () => void;
   onShowHiddenCompleted?: () => void;
   options: TaskListViewOptions;
+  /** Store entry of the list to render (`useFetchTaskList().queryKey`) when `items` is absent. */
+  queryKey?: string;
   routeScope?: TaskItemRouteScope;
 }
-
-const HIDDEN_COMPLETED_STATUS_SET = new Set<string>(HIDDEN_WHEN_COMPLETED_STATUSES);
 
 /** Row height the window sizes itself by before it has measured real rows. */
 const DEFAULT_ROW_HEIGHT = 52;
@@ -131,11 +135,20 @@ const VIRTUAL_LIST_COMPONENTS: Components<TaskListVirtualItem, TaskListVirtualCo
 };
 
 const TaskList = memo<TaskListProps>((props) => {
-  const { data, error, isLoading, items, onRetry, onShowHiddenCompleted, options, routeScope } =
-    props;
+  const {
+    data,
+    error,
+    isLoading,
+    items,
+    onRetry,
+    onShowHiddenCompleted,
+    options,
+    queryKey,
+    routeScope,
+  } = props;
   const { t } = useTranslation('chat');
-  const storeTasks = useTaskStore(taskListSelectors.taskList);
-  const storeTasksTotal = useTaskStore(taskListSelectors.taskListTotal);
+  const storeTasks = useTaskStore(taskListSelectors.taskList(queryKey));
+  const storeTasksTotal = useTaskStore(taskListSelectors.taskListTotal(queryKey));
   const tasks = items ?? storeTasks;
   // The store list is fetched in full up to a ceiling; past it the server's
   // `total` still counts every task, so say the list is a subset rather than
@@ -147,13 +160,13 @@ const TaskList = memo<TaskListProps>((props) => {
   const effectiveSubGroupBy = groupBy === 'none' ? 'none' : subGroupBy;
   const unfinishedTasks = useMemo(
     () =>
-      options.hideCompleted
-        ? tasks.filter((task) => !HIDDEN_COMPLETED_STATUS_SET.has(task.status))
-        : tasks,
-    [tasks, options.hideCompleted],
+      options.completedTasks === 'all'
+        ? tasks
+        : tasks.filter((task) => !isTaskHiddenByCompletedFilter(task, options.completedTasks)),
+    [tasks, options.completedTasks],
   );
   // Only the completed/canceled cut feeds the "hidden by display options"
-  // footer — its "Show" action clears `hideCompleted`, so folding the sub-task
+  // footer — its "Show" action resets `completedTasks` to 'all', so folding the sub-task
   // count in would promise a reveal that toggle doesn't deliver.
   const hiddenCount = tasks.length - unfinishedTasks.length;
   const visibleTasks = useMemo(
@@ -255,6 +268,7 @@ const TaskList = memo<TaskListProps>((props) => {
   const emptyState = (
     <Center height={'80vh'} width={'100%'}>
       <Empty
+        action={props.emptyAction}
         description={props.emptyDescription ?? t('taskList.empty')}
         icon={ClipboardCheckIcon}
       />

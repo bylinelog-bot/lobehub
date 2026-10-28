@@ -2,6 +2,16 @@ import { WorkspaceMemberModel } from '@/database/models/workspaceMember';
 import type { AcceptanceItem } from '@/database/schemas/verify';
 import type { LobeChatDatabase } from '@/database/type';
 
+/**
+ * Workspace roles that may decide on a teammate's acceptance: everyone with
+ * write access, the way a repository's write permission is enough to merge a
+ * pull request. A delivery waiting on its author must not be stuck until an
+ * owner turns up; viewers, who only read, weigh in through comments instead.
+ */
+const DECIDER_ROLES = new Set(['owner', 'admin', 'member']);
+
+const isDeciderRole = (role?: string | null) => Boolean(role && DECIDER_ROLES.has(role));
+
 export interface AcceptanceScopeCtx {
   serverDB: LobeChatDatabase;
   userId?: string | null;
@@ -11,17 +21,23 @@ export interface AcceptanceScopeCtx {
  * May this caller write to this acceptance?
  *
  * The creator always may. Beyond that, an acceptance that belongs to a workspace
- * may also be managed by an OWNER of **that** workspace — not of the caller's
+ * may also be managed by any non-viewer (owner, admin or member) of **that** workspace — not of the caller's
  * currently-active one, which is frequently a different workspace or none at
  * all. Reading membership off the row's own workspace is what makes the rule
  * stable no matter where the caller happens to be standing, and it is the same
  * rule `getBundle` reports as `canReview`, so the page can never advertise an
  * action the mutation would refuse.
  */
+type ScopedAcceptance = Pick<AcceptanceItem, 'userId' | 'workspaceId'> & {
+  subjectType?: AcceptanceItem['subjectType'];
+};
+
 export async function canManageAcceptance(
   ctx: AcceptanceScopeCtx,
-  acceptance: Pick<AcceptanceItem, 'userId' | 'workspaceId'>,
+  acceptance: ScopedAcceptance,
 ): Promise<boolean> {
+  // A site's standing review is managed only through its site in project settings.
+  if (acceptance.subjectType === 'site') return false;
   if (ctx.userId && ctx.userId === acceptance.userId) return true;
   if (!ctx.userId || !acceptance.workspaceId) return false;
 
@@ -29,17 +45,19 @@ export async function canManageAcceptance(
     acceptance.workspaceId,
     ctx.userId,
   );
-  return member?.role === 'owner';
+  return isDeciderRole(member?.role);
 }
 
 /**
- * Batch twin of {@link canManageAcceptance} for sweep endpoints: same rule,
- * but ONE membership lookup per distinct workspace instead of one per row —
- * a 200-row sweep must not turn authorization into 200 serial queries.
+ * Batch twin of {@link canManageAcceptance} for sweep and list endpoints: same
+ * rule, but the caller's roles in every distinct foreign workspace come back in
+ * ONE read — a 200-row sweep, or a participated page spanning many workspaces,
+ * must not turn authorization into a chain of sequential queries.
  */
-export async function filterManageableAcceptances<
-  T extends Pick<AcceptanceItem, 'userId' | 'workspaceId'>,
->(ctx: AcceptanceScopeCtx, rows: T[]): Promise<T[]> {
+export async function filterManageableAcceptances<T extends ScopedAcceptance>(
+  ctx: AcceptanceScopeCtx,
+  rows: T[],
+): Promise<T[]> {
   if (!ctx.userId) return [];
   const userId = ctx.userId;
 
@@ -50,16 +68,15 @@ export async function filterManageableAcceptances<
         .map((row) => row.workspaceId as string),
     ),
   ];
-  const owned = new Set<string>();
-  for (const workspaceId of foreignWorkspaceIds) {
-    const member = await new WorkspaceMemberModel(ctx.serverDB, userId).getMember(
-      workspaceId,
-      userId,
-    );
-    if (member?.role === 'owner') owned.add(workspaceId);
-  }
+  const roles = await new WorkspaceMemberModel(ctx.serverDB, userId).getRolesInWorkspaces(
+    foreignWorkspaceIds,
+    userId,
+  );
 
   return rows.filter(
-    (row) => row.userId === userId || (row.workspaceId ? owned.has(row.workspaceId) : false),
+    (row) =>
+      row.subjectType !== 'site' &&
+      (row.userId === userId ||
+        (row.workspaceId ? isDeciderRole(roles.get(row.workspaceId)) : false)),
   );
 }

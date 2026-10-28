@@ -20,11 +20,12 @@ vi.hoisted(() => {
   });
 });
 
-const createWrapper = (showProvider: boolean) => {
+const createWrapper = (showProvider: boolean, enableBusinessFeatures = false) => {
   const Wrapper = ({ children }: { children: ReactNode }) => (
     <Provider
       createStore={() =>
         initServerConfigStore({
+          serverConfig: { aiProvider: {}, enableBusinessFeatures, telemetry: {} },
           featureFlags: {
             ...mapFeatureFlagsEnvToState({
               provider_settings: true,
@@ -72,15 +73,29 @@ describe('settings useCategory', () => {
       SettingsTabs.Profile,
       SettingsTabs.Appearance,
       SettingsTabs.Hotkey,
-      SettingsTabs.Messenger,
     ]);
+    // Environments is there with no lab switch: a code environment is a
+    // definition, written down whether or not there is a drive to run it on.
     expect(generalGroup?.items.map((item) => item.key)).toEqual([
       SettingsTabs.Stats,
       SettingsTabs.Devices,
+      SettingsTabs.Environments,
     ]);
     expect(
       result.current.find((group) => group.key === SettingsGroupKey.Agent)?.items.map((i) => i.key),
     ).not.toContain(SettingsTabs.Messenger);
+  });
+
+  // Messenger bots are LobeHub-operated and only configurable from the cloud
+  // admin, so the tab is a dead end on self-hosted deployments.
+  it('shows Messenger in the Account group only with business features on', () => {
+    expect(getItemKeys()).not.toContain(SettingsTabs.Messenger);
+
+    const { result } = renderHook(() => useCategory(), {
+      wrapper: createWrapper(true, true),
+    });
+    const accountGroup = result.current.find((group) => group.key === SettingsGroupKey.Account);
+    expect(accountGroup?.items.map((item) => item.key)).toContain(SettingsTabs.Messenger);
   });
 
   it('keeps Provider visible when provider settings are enabled', () => {
@@ -113,6 +128,27 @@ describe('settings useCategory', () => {
     const { result } = renderHook(() => useCategory(), { wrapper: createWrapper(true) });
     const accountGroup = result.current.find((group) => group.key === SettingsGroupKey.Account);
     expect(accountGroup?.items.map((item) => item.key)).toContain(SettingsTabs.Integrations);
+  });
+
+  // The drives are what a persistent sandbox run keeps files on, so the tab
+  // that sets them out follows the same lab switch as the composer's picker.
+  it('shows Storage beside Environments once persistent sandboxes are switched on', () => {
+    expect(getItemKeys()).not.toContain(SettingsTabs.Drive);
+
+    useUserStore.setState({
+      preference: {
+        ...initialUserStoreState.preference,
+        lab: { ...initialUserStoreState.preference.lab, enablePersistentSandbox: true },
+      },
+    });
+    const { result } = renderHook(() => useCategory(), { wrapper: createWrapper(true) });
+    const generalGroup = result.current.find((group) => group.key === SettingsGroupKey.General);
+    expect(generalGroup?.items.map((item) => item.key)).toEqual([
+      SettingsTabs.Stats,
+      SettingsTabs.Devices,
+      SettingsTabs.Environments,
+      SettingsTabs.Drive,
+    ]);
   });
 
   it('shows OAuth Apps when the Labs preference is enabled', () => {

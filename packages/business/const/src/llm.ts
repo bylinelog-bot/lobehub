@@ -6,6 +6,18 @@ export const DEFAULT_MINI_MODEL = 'gpt-5.6-luna';
 export const DEFAULT_MINI_PROVIDER = 'openai';
 
 /**
+ * The model that scores "is this message talking to the bot?" before a bot joins a conversation
+ * nobody addressed to it. It sits on the path to a reply and has a 2s deadline, so it is a
+ * decision model: one pass over the input that answers typed questions with probabilities,
+ * instead of a chat model that generates JSON. The cloud build points it at its own Jev route.
+ * `engine: 'chat'` points it at a chat model (for example DeepSeek flash) when a deployment has
+ * no decision model.
+ */
+export const DEFAULT_BOT_WAKE_ENGINE: 'chat' | 'decision' = 'decision';
+export const DEFAULT_BOT_WAKE_MODEL = 'gpt-6-luna:decision';
+export const DEFAULT_BOT_WAKE_PROVIDER = 'openai';
+
+/**
  * The speech-to-text model that transcribes voice messages for runtimes that only take text
  * (heterogeneous agents). It only takes effect once its provider is enabled, so a deployment
  * without that provider keeps voice input for those agents hidden.
@@ -43,3 +55,14 @@ export const DEFAULT_REVIEW_PREDICT_PROVIDER = 'google';
  */
 export const DEFAULT_VERIFY_MODEL = 'glm-5.3-flash';
 export const DEFAULT_VERIFY_PROVIDER = 'zhipu';
+
+/**
+ * The model that splits an acceptance requirement into named verify criteria
+ * (run-start plan instantiation and the task "generate criteria" action). A
+ * text-only structured-output call, so it is pinned separately from the
+ * vision-capable judge above: inheriting the verifier's chat model let a
+ * reasoning model burn its budget and return no parsable JSON, which silently
+ * collapsed every checklist to the single holistic fallback row.
+ */
+export const DEFAULT_VERIFY_PLAN_MODEL = 'deepseek-flash';
+export const DEFAULT_VERIFY_PLAN_PROVIDER = 'deepseek';

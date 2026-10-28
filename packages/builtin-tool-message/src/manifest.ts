@@ -185,6 +185,18 @@ const botSettingsSchema = {
       },
       type: 'array',
     },
+    botWakeDuties: {
+      description:
+        'The bot\'s duties (职责边界): free text, one duty per line, saying what the bot is responsible for in its channels (e.g. "When someone describes a feature request, assess it; for easy ones create a task for dario"). When bot-wake is on (botWakeEnabled), a message from anyone that nobody addressed to the bot but that falls within these duties may wake it. Empty string turns this off. Overwrite-replace: to add or change one duty, read the current text with getBotDetail, edit it, and write the whole text back. Only change it when the bot\'s owner asks; up to 4000 characters.',
+      type: 'string',
+    },
+    botWakeDutiesThreshold: {
+      description:
+        'How sure the bot must be that a message falls within botWakeDuties before it steps in, 0..1 (default 0.8). Higher = steps in less often.',
+      maximum: 1,
+      minimum: 0,
+      type: 'number',
+    },
     dmPolicy: {
       description:
         'Direct-message gate. open=accept DMs from anyone (default); allowlist=only users in allowFrom can DM, fails closed if list is empty; pairing=non-listed senders get a one-time code and the owner runs /approve <code> to add them; disabled=ignore all DMs. pairing requires settings.userId (owner platform ID).',
@@ -227,10 +239,15 @@ const botSettingsSchema = {
     },
     watchKeywords: {
       description:
-        'Channel-side keyword wake list. When a non-mention message in a non-DM channel contains any of these keywords (case-insensitive, whole-word), the bot wakes without an @mention. If the matched entry has an `instruction`, it is prepended to the user message as an extra prompt before being sent to the AI — so a bare trigger like "bug" can carry a directive ("Scan the recent thread and reply if there is a real bug report"). Empty/absent instructions just wake the bot with the raw user text. Same overwrite-replace semantics as allowFrom — read-modify-write via getBotDetail to add/remove entries.',
+        'Channel-side keyword wake list. When a non-mention message in a non-DM channel contains any of these keywords (case-insensitive, whole-word), the bot wakes without an @mention. If the matched entry has an `instruction`, it is prepended to the user message as an extra prompt before being sent to the AI — so a bare trigger like "bug" can carry a directive ("Scan the recent thread and reply if there is a real bug report"). Empty/absent instructions just wake the bot with the raw user text. Set `asName: true` on an entry to make the keyword one of the bot\'s names (a nickname or alias such as "canis" or "倏昱"): saying it calls the bot like its display name does. Same overwrite-replace semantics as allowFrom — read-modify-write via getBotDetail to add/remove entries.',
       items: {
         additionalProperties: false,
         properties: {
+          asName: {
+            description:
+              'Mark this keyword as a name the bot answers to (an alias or nickname). A message that says it is treated as calling the bot by name: answered right away, even while the owner is active in the channel. Omit (or false) for an ordinary trigger word like "bug" or "mobile". Its `instruction`, if any, still applies.',
+            type: 'boolean',
+          },
           instruction: {
             description:
               'Optional operator-authored prompt prepended to the user message when this keyword fires. Omit for "just wake the bot" behaviour.',
@@ -918,7 +935,7 @@ export const MessageManifest: BuiltinToolManifest = {
           settings: {
             ...botSettingsSchema,
             description:
-              'Updated settings (partial update at the key level). See nested field descriptions for the allowed keys (dmPolicy, allowFrom, userId, groupPolicy, groupAllowFrom, serverId, watchKeywords).',
+              'Updated settings (partial update at the key level). See nested field descriptions for the allowed keys (dmPolicy, allowFrom, userId, groupPolicy, groupAllowFrom, serverId, watchKeywords, botWakeDuties, botWakeDutiesThreshold).',
           },
         },
         required: ['botId'],
@@ -1087,7 +1104,7 @@ export const MessageManifest: BuiltinToolManifest = {
     },
     {
       description:
-        'Proactively push a message to the CURRENT USER\'s own DM with the LobeHub System Bot — THE api for "send me a message on <platform>", "DM me", "notify me when done". Unlike `sendDirectMessage` it needs no bot discovery, channel id, or platform user id: the server resolves the user\'s own account link. Availability comes from that account link, NOT from `listBots` / `listMessengers` — a platform missing there can still be pushable, so never refuse based on those lists. Call `listMessengerLinks` when unsure which platforms are linked; when the user named one, just push and let an `unlinked` status tell you. Telegram / Discord deliver immediately. Slack with several linked workspaces returns `needs_workspace_selection` — ask the user to pick, then retry with that `tenantId`. WeChat can only deliver inside the send window opened by the user\'s last inbound message; outside it the push is `queued` and you must tell the user to message the LobeHub WeChat bot first so the queued push gets delivered.',
+        'Proactively push a message to the CURRENT USER\'s own DM with the LobeHub System Bot — THE api for "send me a message on <platform>", "DM me", "notify me when done". Unlike `sendDirectMessage` it needs no bot discovery, channel id, or platform user id: the server resolves the user\'s own account link. Availability comes from that account link, NOT from `listBots` / `listMessengers` — a platform missing there can still be pushable, so never refuse based on those lists. Call `listMessengerLinks` when unsure which platforms are linked; when the user named one, just push and let an `unlinked` status tell you. Telegram / Discord / iMessage-SMS (`linq`) deliver immediately. Slack with several linked workspaces returns `needs_workspace_selection` — ask the user to pick, then retry with that `tenantId`. WeChat can only deliver inside the send window opened by the user\'s last inbound message; outside it the push is `queued` and you must tell the user to message the LobeHub WeChat bot first so the queued push gets delivered.',
       name: MessageApiName.sendMessengerPush,
       ordered: true,
       parameters: {
@@ -1101,8 +1118,9 @@ export const MessageManifest: BuiltinToolManifest = {
             type: 'string',
           },
           platform: {
-            description: 'Platform to push to — must be one the user has linked.',
-            enum: ['telegram', 'slack', 'discord', 'wechat'],
+            description:
+              "Platform to push to — must be one the user has linked. `linq` is iMessage / SMS to the user's linked phone number.",
+            enum: ['telegram', 'slack', 'discord', 'wechat', 'linq'],
             type: 'string',
           },
           tenantId: {

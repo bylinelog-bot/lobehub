@@ -22,8 +22,11 @@ import { auvRuntime } from './auv';
 import { briefRuntime } from './brief';
 import { browserRuntime } from './browser';
 import { calculatorRuntime } from './calculator';
+import { canvasRuntime } from './canvas';
+import { channelRuntime } from './channel';
 import { cloudSandboxRuntime } from './cloudSandbox';
 import { credsRuntime } from './creds';
+import { dashboardRuntime } from './dashboard';
 import { goalRuntime } from './goal';
 import { goalReportRuntime } from './goalReport';
 import { goalSupervisorRuntime } from './goalSupervisor';
@@ -43,7 +46,6 @@ import { skillManagementRuntime } from './skillManagement';
 import { skillsRuntime } from './skills';
 import { skillStoreRuntime } from './skillStore';
 import { taskRuntime } from './task';
-import { topicReferenceRuntime } from './topicReference';
 import type { ServerRuntimeFactory, ServerRuntimeRegistration } from './types';
 import { userInteractionRuntime } from './userInteraction';
 import { verifyResultRuntime } from './verifyResult';
@@ -67,6 +69,7 @@ const registerRuntimes = (runtimes: ServerRuntimeRegistration[]) => {
 
 // Register all server runtimes
 registerRuntimes([
+  channelRuntime,
   acceptanceEvidenceRuntime,
   auvRuntime,
   agentBuilderRuntime,
@@ -87,9 +90,10 @@ registerRuntimes([
   remoteDeviceRuntime,
   briefRuntime,
   taskRuntime,
-  topicReferenceRuntime,
   userInteractionRuntime,
   credsRuntime,
+  canvasRuntime,
+  dashboardRuntime,
   groupAgentBuilderRuntime,
   groupManagementRuntime,
   goalRuntime,

@@ -1,6 +1,6 @@
 import { ENABLE_TOOL_CHANNEL_SETTINGS } from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
-import { Avatar } from '@lobehub/ui/base-ui';
+import { Avatar } from '@lobehub/ui';
 import { SkillsIcon } from '@lobehub/ui/icons';
 import {
   AppWindowIcon,
@@ -11,12 +11,14 @@ import {
   BrainCircuit,
   ChartColumnBigIcon,
   Coins,
+  ContainerIcon,
   CreditCard,
   Database,
   EllipsisIcon,
   EthernetPort,
   FlaskConical,
   Gift,
+  HardDriveIcon,
   Info,
   KeyboardIcon,
   KeyIcon,
@@ -85,6 +87,7 @@ export const useCategory = () => {
   const isDevMode = useUserStore((s) => userGeneralSettingsSelectors.config(s).isDevMode);
   const enableOAuthApps = useUserStore(labPreferSelectors.enableOAuthApps);
   const enableIntegrations = useUserStore(labPreferSelectors.enableIntegrations);
+  const enablePersistentSandbox = useUserStore(labPreferSelectors.enablePersistentSandbox);
 
   const avatarUrl = useMemo(() => {
     if (!avatar) return undefined;
@@ -117,8 +120,10 @@ export const useCategory = () => {
         label: t('tab.hotkey'),
       },
       // Messenger bindings are a per-user identity (owned by userId), so they
-      // live with the account rather than the agent configuration.
-      {
+      // live with the account rather than the agent configuration. The bots
+      // are LobeHub-operated: their credentials are only ever written by the
+      // cloud admin, so a self-hosted deployment has nothing to bind to.
+      enableBusinessFeatures && {
         icon: MessageCircleIcon,
         key: SettingsTabs.Messenger,
         label: t('tab.messenger'),
@@ -150,6 +155,21 @@ export const useCategory = () => {
         icon: MonitorSmartphoneIcon,
         key: SettingsTabs.Devices,
         label: t('tab.devices'),
+      },
+      // Always there: a code environment is a definition, written down before
+      // anything runs it, and useful with or without a drive to run it on.
+      {
+        icon: ContainerIcon,
+        key: SettingsTabs.Environments,
+        label: t('tab.environments'),
+      },
+      // The drives a cloud-sandbox run keeps files on, with their usage and
+      // the way to a plan — behind the same lab switch the composer's folder
+      // picker is, since without it no run ever touches a drive.
+      enablePersistentSandbox && {
+        icon: HardDriveIcon,
+        key: SettingsTabs.Drive,
+        label: t('tab.drive'),
       },
       (enableBusinessFeatures || isDesktop) && {
         icon: BellIcon,
@@ -320,6 +340,7 @@ export const useCategory = () => {
     isDevMode,
     enableOAuthApps,
     enableIntegrations,
+    enablePersistentSandbox,
     avatarUrl,
     username,
   ]);

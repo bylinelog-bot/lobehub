@@ -1,9 +1,18 @@
 'use client';
 
 import { type ComposioAppType } from '@lobechat/const';
-import { Center, DropdownMenu, Flexbox, Icon, Tooltip } from '@lobehub/ui';
-import { Avatar, Button, Button as LobeButton, confirmModal } from '@lobehub/ui/base-ui';
-import { cssVar } from 'antd-style';
+import {
+  Avatar,
+  Button,
+  Button as LobeButton,
+  Center,
+  confirmModal,
+  cssVar,
+  DropdownMenu,
+  Flexbox,
+  Icon,
+  Tooltip,
+} from '@lobehub/ui';
 import {
   CircleCheck,
   MoreHorizontalIcon,
@@ -19,8 +28,14 @@ import NavItem from '@/features/NavPanel/components/NavItem';
 import { usePermission } from '@/hooks/usePermission';
 import { useToolStore } from '@/store/tool';
 import { type ComposioServer } from '@/store/tool/slices/composioStore';
-import { ComposioServerStatus } from '@/store/tool/slices/composioStore';
+import { ComposioServerStatus, composioStoreSelectors } from '@/store/tool/slices/composioStore';
 
+import {
+  AskAdminButton,
+  DisabledConnect,
+  renderConnectorRowDescription,
+} from './ConnectorRowFeedback';
+import { isSettledByConnection, useConnectorManageGate } from './connectorRowState';
 import { styles } from './style';
 
 const POLL_INTERVAL_MS = 1000;
@@ -51,6 +66,13 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
     const refreshComposioConnectionStatus = useToolStore((s) => s.refreshComposioConnectionStatus);
     const removeComposioConnection = useToolStore((s) => s.removeComposioConnection);
     const reauthorizeComposioConnection = useToolStore((s) => s.reauthorizeComposioConnection);
+    const setServerError = useToolStore((s) => s.setComposioServerError);
+    const actionError = useToolStore(composioStoreSelectors.getServerError(serverType.identifier));
+
+    // Without the row-level gate a member's click hits a 403 and looks dead.
+    const { access } = useConnectorManageGate(serverType.identifier);
+    const canManage = access === 'allowed';
+    const isRestricted = access === 'restricted';
 
     const cleanup = useCallback(() => {
       if (windowCheckIntervalRef.current) {
@@ -99,9 +121,17 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
             pollIntervalRef.current = null;
           }
           setIsWaitingAuth(false);
+          // The OAuth window is gone and the connection never became active:
+          // say so on the row, the user may not have noticed the popup failed.
+          const latest = composioStoreSelectors.getServerByIdentifier(identifier)(
+            useToolStore.getState(),
+          );
+          if (latest?.status !== ComposioServerStatus.ACTIVE) {
+            setServerError(identifier, { action: 'connect', code: 'AUTH_INCOMPLETE' });
+          }
         }, POLL_TIMEOUT_MS);
       },
-      [refreshComposioConnectionStatus],
+      [refreshComposioConnectionStatus, setServerError],
     );
 
     const startWindowMonitor = useCallback(
@@ -146,7 +176,7 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
     );
 
     const handleConnect = async () => {
-      if (!canCreate || !canEdit) return;
+      if (!canCreate || !canEdit || !canManage) return;
       if (server) return;
 
       setIsConnecting(true);
@@ -172,7 +202,7 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
     };
 
     const handleReauthorize = async () => {
-      if (!canCreate || !canEdit || !server) return;
+      if (!canCreate || !canEdit || !canManage || !server) return;
       setIsConnecting(true);
       try {
         const newServer = await reauthorizeComposioConnection(server.identifier);
@@ -187,12 +217,12 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
     };
 
     const handleDelete = async () => {
-      if (!canEdit || !server) return;
+      if (!canEdit || !canManage || !server) return;
       await removeComposioConnection(server.identifier);
     };
 
     const handleDisconnect = () => {
-      if (!canEdit) return;
+      if (!canEdit || !canManage) return;
       if (!server) return;
       confirmModal({
         cancelText: t('cancel', { ns: 'common' }),
@@ -252,11 +282,20 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
         );
       }
 
+      if (isRestricted && server?.status !== ComposioServerStatus.ACTIVE) {
+        return (
+          <Flexbox horizontal align="center" gap={8}>
+            <DisabledConnect size="middle" />
+            <AskAdminButton name={serverType.label} variant="primary" />
+          </Flexbox>
+        );
+      }
+
       if (!server) {
         return (
           <Tooltip title={!canCreate ? createReason : editReason}>
             <Button
-              disabled={!canCreate || !canEdit}
+              disabled={!canCreate || !canEdit || !canManage}
               icon={<Icon icon={SquareArrowOutUpRight} />}
               type="default"
               onClick={handleConnect}
@@ -295,8 +334,8 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
               },
             ]}
           >
-            <Tooltip title={editReason}>
-              <LobeButton disabled={!canEdit} icon={MoreHorizontalIcon} />
+            <Tooltip title={isRestricted ? t('tools.connectorFeedback.manageOnly') : editReason}>
+              <LobeButton disabled={!canEdit || !canManage} icon={MoreHorizontalIcon} />
             </Tooltip>
           </DropdownMenu>
         );
@@ -317,8 +356,8 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
               },
             ]}
           >
-            <Tooltip title={editReason}>
-              <LobeButton disabled={!canEdit} icon={MoreHorizontalIcon} />
+            <Tooltip title={isRestricted ? t('tools.connectorFeedback.manageOnly') : editReason}>
+              <LobeButton disabled={!canEdit || !canManage} icon={MoreHorizontalIcon} />
             </Tooltip>
           </DropdownMenu>
         );
@@ -328,6 +367,20 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
     };
 
     const isConnected = server?.status === ComposioServerStatus.ACTIVE;
+    const description = renderConnectorRowDescription({
+      askAdmin: isRestricted && !isConnected,
+      error: actionError,
+      name: serverType.label,
+    });
+
+    // A connection that became active (also through a later list revalidation,
+    // e.g. after a slow OAuth) settles any earlier connect failure. A failed
+    // remove leaves the row active on purpose, so its reason stays.
+    const hasStaleConnectError = isSettledByConnection(isConnected, actionError);
+    useEffect(() => {
+      if (hasStaleConnectError) setServerError(serverType.identifier, undefined);
+    }, [hasStaleConnectError, serverType.identifier, setServerError]);
+
     const isPending = server?.status === ComposioServerStatus.PENDING_AUTH;
     const isError = server?.status === ComposioServerStatus.ERROR;
 
@@ -348,11 +401,14 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
           </Tooltip>
         );
       }
+      if (isRestricted) {
+        return <DisabledConnect />;
+      }
       if (isPending || isError) {
         return (
           <Tooltip title={!canCreate ? createReason : editReason}>
             <Button
-              disabled={!canCreate || !canEdit}
+              disabled={!canCreate || !canEdit || !canManage}
               icon={<Icon icon={SquareArrowOutUpRight} />}
               size="small"
               type="text"
@@ -366,7 +422,7 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
       return (
         <Tooltip title={!canCreate ? createReason : editReason}>
           <Button
-            disabled={!canCreate || !canEdit}
+            disabled={!canCreate || !canEdit || !canManage}
             icon={<Icon icon={SquareArrowOutUpRight} />}
             size="small"
             type="text"
@@ -387,6 +443,7 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
       return (
         <NavItem
           active={isSelected}
+          description={description}
           extra={renderNavExtra()}
           icon={renderNavIcon}
           title={serverType.label}
@@ -408,7 +465,7 @@ const ComposioSkillItem = memo<ComposioSkillItemProps>(
         gap={8}
         justify="space-between"
         style={{
-          ...(isSelected ? { background: 'var(--ant-color-primary-bg)', borderRadius: 6 } : {}),
+          ...(isSelected ? { background: 'var(--lobe-color-primary-bg)', borderRadius: 6 } : {}),
           ...(onSelect ? { cursor: 'pointer' } : {}),
         }}
         onClick={onSelect}

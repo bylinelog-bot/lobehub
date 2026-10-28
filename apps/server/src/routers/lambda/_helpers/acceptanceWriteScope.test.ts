@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { canManageAcceptance, filterManageableAcceptances } from './acceptanceWriteScope';
 
 const getMember = vi.hoisted(() => vi.fn());
+const getRolesInWorkspaces = vi.hoisted(() => vi.fn());
 
 vi.mock('@/database/models/workspaceMember', () => ({
   WorkspaceMemberModel: class {
     getMember = getMember;
+    getRolesInWorkspaces = getRolesInWorkspaces;
   },
 }));
 
@@ -17,6 +19,7 @@ const row = (userId: string, workspaceId: string | null) =>
 
 beforeEach(() => {
   getMember.mockReset();
+  getRolesInWorkspaces.mockReset();
 });
 
 describe('canManageAcceptance', () => {
@@ -38,12 +41,32 @@ describe('canManageAcceptance', () => {
     expect(getMember).toHaveBeenCalledWith('ws_a', 'me');
   });
 
-  it('does not let an ordinary member write a teammate delivery', async () => {
-    getMember.mockResolvedValue({ role: 'member' });
+  it("lets an admin of the acceptance's own workspace write a teammate's delivery", async () => {
+    getMember.mockResolvedValue({ role: 'admin' });
+
+    await expect(
+      canManageAcceptance({ serverDB: db, userId: 'me' }, row('teammate', 'ws_a')),
+    ).resolves.toBe(true);
+    expect(getMember).toHaveBeenCalledWith('ws_a', 'me');
+  });
+
+  it('does not let a viewer write a teammate delivery', async () => {
+    getMember.mockResolvedValue({ role: 'viewer' });
 
     await expect(
       canManageAcceptance({ serverDB: db, userId: 'me' }, row('teammate', 'ws_a')),
     ).resolves.toBe(false);
+  });
+
+  // A member holds write access, like a repository's write permission that is
+  // enough to merge a pull request — only viewers are kept to comments.
+  it("lets an ordinary member of the acceptance's own workspace write a teammate's delivery", async () => {
+    getMember.mockResolvedValue({ role: 'member' });
+
+    await expect(
+      canManageAcceptance({ serverDB: db, userId: 'me' }, row('teammate', 'ws_a')),
+    ).resolves.toBe(true);
+    expect(getMember).toHaveBeenCalledWith('ws_a', 'me');
   });
 
   it('does not let a non-member write it', async () => {
@@ -67,28 +90,57 @@ describe('canManageAcceptance', () => {
     );
     expect(getMember).not.toHaveBeenCalled();
   });
+
+  it('keeps a site review read-only even for its creator', async () => {
+    await expect(
+      canManageAcceptance(
+        { serverDB: db, userId: 'me' },
+        { ...row('me', 'ws_a'), subjectType: 'site' },
+      ),
+    ).resolves.toBe(false);
+  });
 });
 
 describe('filterManageableAcceptances', () => {
   it('applies the same rule as the single-row check', async () => {
-    getMember.mockImplementation(async (workspaceId: string) =>
-      workspaceId === 'ws_owned' ? { role: 'owner' } : { role: 'member' },
+    getRolesInWorkspaces.mockResolvedValue(
+      new Map([
+        ['ws_owned', 'owner'],
+        ['ws_admin', 'admin'],
+        ['ws_member', 'member'],
+        ['ws_viewer', 'viewer'],
+      ]),
     );
 
     const rows = [
       row('me', null),
       row('me', 'ws_member'),
+      { ...row('me', 'ws_owned'), subjectType: 'site' as const },
+      { ...row('teammate', 'ws_member'), subjectType: 'site' as const },
       row('teammate', 'ws_owned'),
+      row('teammate', 'ws_admin'),
       row('teammate', 'ws_member'),
+      row('teammate', 'ws_viewer'),
       row('teammate', null),
     ];
     await expect(
       filterManageableAcceptances({ serverDB: db, userId: 'me' }, rows),
-    ).resolves.toEqual([row('me', null), row('me', 'ws_member'), row('teammate', 'ws_owned')]);
+    ).resolves.toEqual([
+      row('me', null),
+      row('me', 'ws_member'),
+      row('teammate', 'ws_owned'),
+      row('teammate', 'ws_admin'),
+      row('teammate', 'ws_member'),
+    ]);
   });
 
-  it('looks membership up once per distinct workspace, not once per row', async () => {
-    getMember.mockResolvedValue({ role: 'owner' });
+  it('reads roles for every distinct foreign workspace in one query', async () => {
+    getRolesInWorkspaces.mockResolvedValue(
+      new Map([
+        ['ws_a', 'owner'],
+        ['ws_b', 'owner'],
+      ]),
+    );
 
     const rows = [
       row('teammate', 'ws_a'),
@@ -102,13 +154,15 @@ describe('filterManageableAcceptances', () => {
     await expect(
       filterManageableAcceptances({ serverDB: db, userId: 'me' }, rows),
     ).resolves.toHaveLength(5);
-    expect(getMember).toHaveBeenCalledTimes(2);
+    expect(getRolesInWorkspaces).toHaveBeenCalledOnce();
+    expect(getRolesInWorkspaces).toHaveBeenCalledWith(['ws_a', 'ws_b'], 'me');
+    expect(getMember).not.toHaveBeenCalled();
   });
 
   it('returns nothing for an anonymous caller', async () => {
     await expect(filterManageableAcceptances({ serverDB: db }, [row('me', null)])).resolves.toEqual(
       [],
     );
-    expect(getMember).not.toHaveBeenCalled();
+    expect(getRolesInWorkspaces).not.toHaveBeenCalled();
   });
 });
