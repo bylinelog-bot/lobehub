@@ -14,6 +14,7 @@ import type { ElicitResult } from '@modelcontextprotocol/client';
 import FileService from '@/services/fileSrv';
 import { createLogger } from '@/utils/logger';
 
+import { getDesktopEnv } from '../env';
 import type { MCPClient } from '../libs/mcp/client';
 import {
   isDeadTransportError,
@@ -593,6 +594,11 @@ export default class McpCtr extends ControllerModule {
   }
 
   @IpcMethod()
+  async getToolTimeoutMs() {
+    return getDesktopEnv().MCP_TOOL_TIMEOUT;
+  }
+
+  @IpcMethod()
   async callTool(payload: SuperJSONSerialized<CallToolInput>) {
     const input = deserializePayload<CallToolInput>(payload);
     return serializePayload(await this.runStdioMcpTool(input));
@@ -792,6 +798,7 @@ export default class McpCtr extends ControllerModule {
           try {
             const raw = (await client.callTool(toolName, args, {
               continuation: elicitation?.continuation,
+              timeoutMs: elicitation ? Math.max(1, elicitation.deadline - Date.now()) : undefined,
               signal: elicitation
                 ? AbortSignal.timeout(Math.max(1, elicitation.deadline - Date.now()))
                 : undefined,

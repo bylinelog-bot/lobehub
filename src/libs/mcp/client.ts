@@ -19,6 +19,7 @@ import {
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import debug from 'debug';
 
+import { getMcpToolTimeoutMs } from './timeout';
 import {
   type MCPClientParams,
   type MCPError,
@@ -33,10 +34,7 @@ import { getMCPErrorLogMetadata, getMCPLogOrigin } from './utils';
 const log = debug('lobe-mcp:client');
 // MCP tool call timeout (milliseconds), configurable via the environment variable MCP_TOOL_TIMEOUT, default is 60000
 // Parse MCP_TOOL_TIMEOUT, only use if it's a valid positive number, otherwise fallback to default 60000
-const MCP_TOOL_TIMEOUT = (() => {
-  const val = Number(process.env.MCP_TOOL_TIMEOUT);
-  return Number.isFinite(val) && val > 0 ? val : 60_000;
-})();
+const MCP_TOOL_TIMEOUT = getMcpToolTimeoutMs();
 
 /**
  * Pre-check stdio command to capture detailed error information
