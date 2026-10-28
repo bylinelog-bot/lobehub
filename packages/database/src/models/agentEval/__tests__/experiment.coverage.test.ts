@@ -1,11 +1,9 @@
 import { inArray } from 'drizzle-orm';
-import { drizzle as drizzleProxy } from 'drizzle-orm/pg-proxy';
-import type { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getTestDB } from '../../../core/getTestDB';
 import { agentEvalDatasets, agentEvalExperiments, agentEvalRuns, users } from '../../../schemas';
-import type { LobeChatDatabase } from '../../../type';
+import { createProxyTestDB } from '../../__tests__/_proxyTestDB';
 import { AgentEvalExperimentModel } from '../experiment';
 
 const serverDB = await getTestDB();
@@ -101,18 +99,17 @@ describe('AgentEvalExperimentModel coverage', () => {
 
     // The ranked-runs read sees one run whose experiment link was cleared concurrently
     // (runs detach with `experiment_id = NULL` when an experiment is deleted).
-    const pool = (serverDB as unknown as { $client: Pool }).$client;
-    const proxyDB = drizzleProxy(async (query, params) => {
-      const result = await pool.query({ rowMode: 'array', text: query, values: params });
-      if (!query.includes('"ranked_runs"')) return { rows: result.rows };
+    const proxyDB = createProxyTestDB(serverDB, (query, { fields, rows }) => {
+      if (!query.includes('"ranked_runs"')) return rows;
 
-      const idIndex = result.fields.findIndex((field) => field.name === 'id');
-      const experimentIndex = result.fields.findIndex((field) => field.name === 'experiment_id');
-      for (const row of result.rows) {
-        if (row[idIndex] === detached.id) row[experimentIndex] = null;
-      }
-      return { rows: result.rows };
-    }) as unknown as LobeChatDatabase;
+      const idIndex = fields.findIndex((field) => field.name === 'id');
+      const experimentIndex = fields.findIndex((field) => field.name === 'experiment_id');
+      return rows.map((row) =>
+        row[idIndex] === detached.id
+          ? row.map((value, index) => (index === experimentIndex ? null : value))
+          : row,
+      );
+    });
 
     const [item] = await new AgentEvalExperimentModel(proxyDB, userId).query();
 

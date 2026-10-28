@@ -1,12 +1,11 @@
 // @vitest-environment node
 import { inArray } from 'drizzle-orm';
-import { drizzle as drizzleProxy } from 'drizzle-orm/pg-proxy';
-import type { Pool } from 'pg';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { getTestDB } from '../../../core/getTestDB';
 import { agents, messages, topics, users } from '../../../schemas';
 import type { LobeChatDatabase } from '../../../type';
+import { createProxyTestDB } from '../../__tests__/_proxyTestDB';
 import { AgentSignalNightlyReviewModel } from '../nightlyReview';
 
 const serverDB: LobeChatDatabase = await getTestDB();
@@ -41,12 +40,8 @@ describe('AgentSignalNightlyReviewModel coverage', () => {
       userId,
     });
 
-    // Raw rows from the pool go through pg's default type parsers, so timestamps arrive as Date.
-    const pool = (serverDB as unknown as { $client: Pool }).$client;
-    const dateParsingDB = drizzleProxy(async (query, params) => {
-      const result = await pool.query({ rowMode: 'array', text: query, values: params });
-      return { rows: result.rows };
-    }) as unknown as LobeChatDatabase;
+    // Raw driver rows go through its default type parsers, so timestamps arrive as Date.
+    const dateParsingDB = createProxyTestDB(serverDB);
 
     const result = await new AgentSignalNightlyReviewModel(dateParsingDB).listActiveAgentTargets(
       userId,
