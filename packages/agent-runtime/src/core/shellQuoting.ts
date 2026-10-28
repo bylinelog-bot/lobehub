@@ -180,7 +180,26 @@ export const skipShellSyntax = (words: string[], start: number): number => {
       }
       continue;
     }
-    if (word.endsWith(')')) {
+    // A `)` in command position closes a `case` pattern or a grouping run, and
+    // the tail after the LAST `)` is the executable. Splitting at `)` used to
+    // run only for the FIRST arm, under the `case` introducer — later arms
+    // start their own segment, so `case x in y)true;; x)rm -rf ~;; esac`
+    // resolved that segment's command to the unrelated word `x)rm` and every
+    // predicate missed the deletion bash performs. Quoted patterns are
+    // already quote-stripped by the time they reach this loop, so a word like
+    // `"a)b"` over-splits; for a blacklist that is the safe direction.
+    const armClose = word.lastIndexOf(')');
+    // `zap(){ rm -rf "$@" }` is a function DEFINITION head, not an arm: the
+    // body opener follows the `)` and the raw word must stay intact so the
+    // definition is parsed (`zap` is later invoked as a forwarding `rm`).
+    if (armClose !== -1 && word.slice(armClose + 1) !== '{') {
+      const command = stripLeadingGroupingParens(word.slice(armClose + 1));
+      if (command.length > 0) {
+        // Re-enter the loop with the executable in the pattern's slot: the
+        // remainder can itself be syntax (`zap(){ rm … }` leaves `{`).
+        words[index] = command;
+        continue;
+      }
       index++;
       continue;
     }

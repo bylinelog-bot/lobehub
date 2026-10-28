@@ -384,8 +384,17 @@ const splitIntoRawSegments = (command: string): string[] => {
     // that bash executes. Skip to the line end WITHOUT consuming the newline so
     // it still separates segments. `#` inside a word (`foo#bar`), inside
     // `${#var}` (preceded by `{`) and inside legacy backtick substitution stay
-    // literal.
-    if (char === '#' && !inBacktick && (i === 0 || /[\s;|&(`]/.test(PREPARED[i - 1] ?? ''))) {
+    // literal. A separator that was ESCAPED does not start a new word: in
+    // `echo foo\ #; rm -rf ~` the space belongs to the word, so `#` is a
+    // literal argument character and the deletion after `;` still runs.
+    // Reading the escaped separator as a word boundary opened a phantom
+    // comment that swallowed the `rm`, and every predicate missed it.
+    if (
+      char === '#' &&
+      !inBacktick &&
+      (i === 0 ||
+        (/[\s;|&(`]/.test(PREPARED[i - 1] ?? '') && !isEscapedAt(PREPARED, i - 1)))
+    ) {
       const commentEnd = PREPARED.indexOf('\n', i);
       i = commentEnd === -1 ? PREPARED.length : commentEnd - 1;
       continue;

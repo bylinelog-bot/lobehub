@@ -829,6 +829,54 @@ describe('matchSemanticShellPredicate', () => {
     });
   });
 
+  // Eighteenth review round (codex, PR #19386): two more comment/arm boundaries.
+  // - `echo foo\ #; rm -rf ~` — the escaped space belongs to the word, so `#`
+  //   is a literal argument and the trailing delete still runs; the comment
+  //   opener only checked "preceded by a separator", not whether that separator
+  //   was escaped, and swallowed the `rm`;
+  // - `case x in y)true;; x)rm -rf ~;; esac` — `)`-splitting ran only under the
+  //   `case` introducer, so the SECOND arm's segment resolved to the unrelated
+  //   word `x)rm` while Bash ran its delete.
+  describe('eighteenth-round review: escaped separators and later case arms', () => {
+    it.each([
+      'echo foo\\ #; rm -rf ~',
+      'echo foo\\ #; rm -rf /',
+      'echo a\\ ; rm -rf ~',
+      'echo "x"\\ #; rm -rf ~',
+    ])('blocks a delete that follows an escaped separator: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    it.each([
+      'case x in y)true;; x)rm -rf ~;; esac; echo ~',
+      'case x in y)true;; x)rm -rf /;; esac',
+      'case x in y)echo hi;; x|z)rm -rf ~;; esac',
+      'case x in y)true;; x)rm -rf /;; esac; echo /',
+    ])('blocks a delete in a later case arm: %s', (command) => {
+      expect(
+        matchSemanticShellPredicate('rmRecursiveHomeTarget', command) ||
+          matchSemanticShellPredicate('rmRecursiveRootTarget', command),
+      ).toBe(true);
+    });
+
+    it.each([
+      // A genuine comment still hides the delete.
+      'echo hi # rm -rf ~',
+      'echo foo\\ # rm -rf ~',
+      // Escaped separator with nothing after the `#` word.
+      'echo foo\\ #',
+      // Later arms that only print stay allowed.
+      'case x in y)echo hi;; x)echo "rm -rf ~";; esac',
+      'case x in y)true;; x)echo hi;; esac',
+    ])('keeps a harmless escaped word or later arm allowed: %s', (command) => {
+      expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
+      expect(matchSemanticShellPredicate('rmRecursiveRootTarget', command)).toBe(false);
+    });
+  });
+
   describe('command substitution containment', () => {
     // Substitution bodies stay embedded inside words rather than splitting the
     // outer command. The predicates above only fire on `rm` as the RESOLVED
