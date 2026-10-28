@@ -62,7 +62,6 @@
   "environment.directoryUnavailable": "Could not verify the directory. Check the device connection and choose the directory again.",
   "environment.editNamed": "Change where {{name}} runs",
   "environment.executionRequired": "Choose an online device and working directory for every coding Agent.",
-  "environment.homeDirectory": "Home folder",
   "environment.inherited.deviceOffline": "This Agent’s device is offline. Reconnect the device, or remove the Agent.",
   "environment.inherited.deviceRequired": "This coding Agent has no default device. Choose one in its settings, or remove the Agent.",
   "environment.inherited.deviceUnavailable": "This Agent’s device is unavailable in the current space. Change it in the Agent’s settings, or remove the Agent.",

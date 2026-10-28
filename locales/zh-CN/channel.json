@@ -62,7 +62,6 @@
   "environment.directoryUnavailable": "无法验证工作目录，请检查设备连接并重新选择目录。",
   "environment.editNamed": "修改 {{name}} 的运行环境",
   "environment.executionRequired": "请为每位编程 Agent 选择在线设备和工作目录。",
-  "environment.homeDirectory": "主目录",
   "environment.inherited.deviceOffline": "此 Agent 的设备已离线，请重新连接设备，或移除此 Agent。",
   "environment.inherited.deviceRequired": "此编程 Agent 还没有默认设备，请先在它的设置里选择设备，或移除此 Agent。",
   "environment.inherited.deviceUnavailable": "当前空间无法使用此 Agent 的设备，请在它的设置里更换设备，或移除此 Agent。",

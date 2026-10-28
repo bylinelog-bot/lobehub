@@ -8,7 +8,7 @@ import AsyncError from '@/components/AsyncError';
 import { openPickWorkingDirModal } from '@/features/WorkingDirectory';
 import type { DeviceListResult } from '@/store/device/useDeviceList';
 
-import type { ChannelAgentDraft, ChannelAgentIssue } from './agentEnvironment';
+import type { ChannelAgentIssue } from './agentEnvironment';
 import type { useChannelAgentDraft } from './useChannelAgentDraft';
 
 const styles = stylex.create({
@@ -16,26 +16,13 @@ const styles = stylex.create({
 });
 
 /** Device issues of an inherited environment are fixed in the Agent's settings, not here. */
-const INHERITED_ISSUES = new Set<ChannelAgentIssue>([
-  'deviceOffline',
-  'deviceRequired',
-  'deviceUnavailable',
-]);
+const INHERITED_ISSUES = ['deviceOffline', 'deviceRequired', 'deviceUnavailable'] as const;
+
+const isInheritedIssue = (issue: ChannelAgentIssue): issue is (typeof INHERITED_ISSUES)[number] =>
+  (INHERITED_ISSUES as readonly ChannelAgentIssue[]).includes(issue);
 
 export const deviceLabel = (device: DeviceListItem) =>
   device.friendlyName || device.hostname || device.deviceId;
-
-/** Where an Agent runs, in one line: `device · directory`. */
-export const environmentSummary = (
-  draft: ChannelAgentDraft,
-  devices: DeviceListResult,
-  /** Shown when no directory is set and the device's home folder applies. */
-  homeDirectory: string,
-) => {
-  if (!draft.deviceId) return;
-  const device = devices.data?.find((item) => item.deviceId === draft.deviceId);
-  return `${device ? deviceLabel(device) : draft.deviceId} · ${draft.workingDirectory || homeDirectory}`;
-};
 
 type DraftControls = ReturnType<typeof useChannelAgentDraft>;
 
@@ -140,7 +127,7 @@ export const EnvironmentIssue = ({
       role="status"
       type={checking ? 'secondary' : 'danger'}
     >
-      {inherited && INHERITED_ISSUES.has(draft.issue)
+      {inherited && isInheritedIssue(draft.issue)
         ? t(`environment.inherited.${draft.issue}`)
         : t(`environment.${draft.issue}`)}
     </Text>

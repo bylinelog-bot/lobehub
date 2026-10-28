@@ -10,7 +10,7 @@ import { DEFAULT_AVATAR } from '@/const/meta';
 import type { DeviceListResult } from '@/store/device/useDeviceList';
 
 import type { ChannelAgentDraft } from './agentEnvironment';
-import { EnvironmentIssue, environmentSummary } from './EnvironmentFields';
+import { EnvironmentIssue } from './EnvironmentFields';
 import { useChannelAgentDraft } from './useChannelAgentDraft';
 import type { ChannelAgentOption } from './useChannelAgentOptions';
 
@@ -22,8 +22,9 @@ const styles = stylex.create({
 const INHERITED = { directoryOptional: true };
 
 /**
- * A chosen Agent keeps its own device and directory, shown as one line. Per-channel changes
- * happen after creation, from the member list.
+ * A chosen Agent keeps its own device and directory without showing them: nothing here can
+ * change them, so only what blocks creation appears. Per-channel changes happen after
+ * creation, from the member list.
  */
 export const SelectedAgent = ({
   agent,
@@ -40,9 +41,6 @@ export const SelectedAgent = ({
   const controls = useChannelAgentDraft(input, devices, setDrafts, INHERITED);
   const { draft } = controls;
   const name = agentDisplayName(agent, t('unnamedAgent'));
-  const summary = draft.issue
-    ? undefined
-    : environmentSummary(draft, devices, t('environment.homeDirectory'));
 
   return (
     <Flexbox gap={4}>
@@ -65,13 +63,8 @@ export const SelectedAgent = ({
           }
         />
       </Flexbox>
-      {(summary || draft.issue) && (
+      {draft.issue && (
         <Flexbox gap={8} {...stylex.props(styles.extra)}>
-          {summary && (
-            <Text ellipsis fontSize={12} title={summary} type="secondary">
-              {summary}
-            </Text>
-          )}
           <EnvironmentIssue inherited controls={controls} />
         </Flexbox>
       )}

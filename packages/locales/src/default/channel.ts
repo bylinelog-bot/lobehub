@@ -33,7 +33,6 @@ export default {
   'environment.devicesLoading': 'Checking device status…',
   'environment.directoryLabel': 'Working directory for {{name}}',
   'environment.directoryRequired': 'Choose a working directory on this device.',
-  'environment.homeDirectory': 'Home folder',
   'environment.inherited.deviceOffline':
     'This Agent’s device is offline. Reconnect the device, or remove the Agent.',
   'environment.inherited.deviceRequired':
