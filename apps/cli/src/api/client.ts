@@ -26,7 +26,9 @@ const PERSONAL_KEY = '__personal__';
 const _clients = new Map<string, TrpcClient>();
 const _toolsClients = new Map<string, ToolsTrpcClient>();
 
-type AuthHeaders = (opts?: { op?: Operation }) => Record<string, string>;
+type AuthHeaders = (opts?: {
+  op?: Operation;
+}) => Record<string, string> | Promise<Record<string, string>>;
 
 async function getAuthAndServer(): Promise<{
   headers: AuthHeaders;
@@ -73,10 +75,17 @@ async function getAuthAndServer(): Promise<{
   }
 
   const serverUrl = resolveServerUrl();
-  const { accessToken } = result.credentials;
-
   return {
-    headers: () => ({ 'Oidc-Auth': accessToken }),
+    // Cached clients outlive access tokens. Resolve stored credentials for
+    // every request, including journal pages after a WebSocket reconnect.
+    headers: async () => {
+      const current = await getValidToken();
+      if (current.status !== 'ok') {
+        const report = describeTokenLookup(current);
+        throw new Error(report ? `${report.detail} ${report.fix}` : 'No authentication found');
+      }
+      return { 'Oidc-Auth': current.credentials.accessToken };
+    },
     serverUrl,
   };
 }
@@ -92,7 +101,7 @@ export async function getTrpcClient(workspaceId?: string): Promise<TrpcClient> {
     links: [
       ...(operationToken ? [operationTokenFallbackLink<LambdaRouter>(operationToken)] : []),
       httpLink({
-        headers: (opts) => withWorkspaceHeader(headers(opts), wsId),
+        headers: async (opts) => withWorkspaceHeader(await headers(opts), wsId),
         transformer: superjson,
         url: `${serverUrl}/trpc/lambda`,
       }),
@@ -103,13 +112,17 @@ export async function getTrpcClient(workspaceId?: string): Promise<TrpcClient> {
   return client;
 }
 
-/** Create an anonymous client for public Lambda procedures, without credential discovery. */
-export function createPublicLambdaClient(): TrpcClient {
+/**
+ * Create an anonymous client for public Lambda procedures, without credential
+ * discovery. Pass `serverUrl` to stay on the server an already-resolved
+ * credential belongs to.
+ */
+export function createPublicLambdaClient(serverUrl: string = resolveServerUrl()): TrpcClient {
   return createTRPCClient<LambdaRouter>({
     links: [
       httpLink({
         transformer: superjson,
-        url: `${resolveServerUrl()}/trpc/lambda`,
+        url: `${serverUrl}/trpc/lambda`,
       }),
     ],
   });
@@ -163,7 +176,7 @@ export async function getToolsTrpcClient(workspaceId?: string): Promise<ToolsTrp
     links: [
       ...(operationToken ? [operationTokenFallbackLink<ToolsRouter>(operationToken)] : []),
       httpLink({
-        headers: (opts) => withWorkspaceHeader(headers(opts), wsId),
+        headers: async (opts) => withWorkspaceHeader(await headers(opts), wsId),
         transformer: superjson,
         url: `${serverUrl}/trpc/tools`,
       }),
