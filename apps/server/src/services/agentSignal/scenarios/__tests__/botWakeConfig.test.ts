@@ -75,19 +75,6 @@ describe('parseBotWakeSettings', () => {
     ).toEqual({ mode: 'enforce', text: 'Triage bugs.', threshold: 0.9 });
   });
 
-  // The form always saves the field, so the 0.8 it saved as its old default left almost every
-  // feature request (scored 0.65-0.76) unanswered on bots whose owner never touched it.
-  it('reads the duty threshold the form saved as its old default as the current default', () => {
-    const K = BOT_WAKE_SETTING_KEYS;
-    const threshold = (value: number) =>
-      parseBotWakeSettings({ [K.duties]: 'Triage feature requests.', [K.dutiesThreshold]: value })
-        .rules.duties.threshold;
-
-    expect(threshold(0.8)).toBe(0.65);
-    expect(threshold(0.85)).toBe(0.85);
-    expect(threshold(0.7)).toBe(0.7);
-  });
-
   // Saved by the forms of "help others" and "help me", which the duties replaced.
   it('ignores the retired help-others and help-me keys, and the form drops them', () => {
     const K = BOT_WAKE_SETTING_KEYS;

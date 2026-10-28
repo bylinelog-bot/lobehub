@@ -66,12 +66,6 @@ const UNTOUCHED_CLASSIFIER_THRESHOLDS = new Set<number>([
   BOT_WAKE_PACE_PRESETS.balanced.classifierThreshold,
 ]);
 
-/**
- * Duty thresholds the form saved as its default before it moved; the form always saves the field, so
- * these mean "never tuned" and read as the current default.
- */
-const UNTOUCHED_DUTY_THRESHOLDS = new Set<number>([0.8]);
-
 /** Spec: a burst is collected for at least 20s, and a run is followed by at least 60s of cooldown. */
 export const MIN_COLLECT_SECONDS = 20;
 export const MIN_COOLDOWN_SECONDS = 60;
@@ -500,10 +494,7 @@ export const parseBotWakeSettings = (
     duties: {
       mode: raw.duties?.mode ?? DEFAULT_WAKE_RULES.duties.mode,
       text: raw.duties?.text?.trim().slice(0, MAX_DUTIES_LENGTH) || undefined,
-      threshold:
-        raw.duties?.threshold === undefined || UNTOUCHED_DUTY_THRESHOLDS.has(raw.duties.threshold)
-          ? DEFAULT_WAKE_RULES.duties.threshold
-          : raw.duties.threshold,
+      threshold: raw.duties?.threshold ?? DEFAULT_WAKE_RULES.duties.threshold,
     },
   };
 
