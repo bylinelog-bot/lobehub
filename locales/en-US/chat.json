@@ -1197,7 +1197,7 @@
   "goalProcess.signOff.description": "Goal-level acceptance passed. Your sign-off closes the goal.",
   "goalProcess.signOff.islandSubtitle": "is done and waiting for your sign-off",
   "goalProcess.signOff.islandSummary": "Goal-level acceptance passed. Read the delivery report, then sign off or request changes.",
-  "goalProcess.signOff.openReport": "Review delivery",
+  "goalProcess.signOff.openReport": "View details",
   "goalProcess.signOff.requestChanges": "Request changes",
   "goalProcess.signOff.sentBack": "Sent back for changes",
   "goalProcess.stalled.description": "Last heartbeat {{duration}}. The next advance restarts this attempt — it does not count as a failure.",

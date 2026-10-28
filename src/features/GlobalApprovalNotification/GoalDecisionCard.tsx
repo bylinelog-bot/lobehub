@@ -17,6 +17,8 @@ import {
   localizedCoordinatorReason,
 } from '@/features/AgentGoals/ProcessControl/coordinatorCopy';
 import { openGoalSignOffModal } from '@/features/AgentGoals/SignOffReport';
+import SignOffDigest from '@/features/AgentGoals/SignOffReport/SignOffDigest';
+import { useGoalSignOff } from '@/features/AgentGoals/SignOffReport/useGoalSignOff';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useGoalStore } from '@/store/goal';
 
@@ -85,6 +87,15 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
       onOpenGoal: openGoal,
     });
 
+  // The digest says what was delivered, so a sign-off the owner agrees with
+  // needs no detour; asking for changes goes through the full report, where
+  // the feedback is written.
+  const { accept, pending } = useGoalSignOff({
+    acceptanceId: item.type === 'signOff' ? item.signOff.acceptanceId : '',
+    onClose: () => {},
+    onDecided: () => refreshGoalAsks(goal.id),
+  });
+
   return (
     <div data-pending-hotkey-scope className={styles.card}>
       {/* The goal's agent asks, the way a run approval leads with the agent
@@ -151,7 +162,7 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
             }
           />
         ) : (
-          <div className={styles.reviewSummary}>{t('goalProcess.signOff.islandSummary')}</div>
+          <SignOffDigest goalId={item.signOff.goalId} key={item.signOff.goalId} />
         )}
       </div>
 
@@ -173,9 +184,21 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
           </Button>
         )}
         {item.type === 'signOff' && (
-          <Button size="small" type="primary" onClick={openSignOff}>
-            {t('goalProcess.signOff.openReport')}
-          </Button>
+          <>
+            <Button disabled={!!pending} size="small" onClick={openSignOff}>
+              {t('goalProcess.signOff.openReport')}
+            </Button>
+            <Button
+              disabled={!!pending}
+              loading={pending === 'accept'}
+              size="small"
+              title={t('goalProcess.signOff.acceptEffect')}
+              type="primary"
+              onClick={accept}
+            >
+              {t('goalProcess.signOff.accept')}
+            </Button>
+          </>
         )}
       </div>
     </div>

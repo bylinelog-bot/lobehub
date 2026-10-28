@@ -2667,7 +2667,7 @@ export default {
   'goalProcess.signOff.islandSubtitle': 'is done and waiting for your sign-off',
   'goalProcess.signOff.islandSummary':
     'Goal-level acceptance passed. Read the delivery report, then sign off or request changes.',
-  'goalProcess.signOff.openReport': 'Review delivery',
+  'goalProcess.signOff.openReport': 'View details',
   'goalProcess.signOff.description': 'Goal-level acceptance passed. Your sign-off closes the goal.',
   'goalProcess.signOff.accept': 'Sign off',
   'goalProcess.signOff.acceptEffect': 'Close the goal as delivered.',
