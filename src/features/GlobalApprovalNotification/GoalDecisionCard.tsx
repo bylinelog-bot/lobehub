@@ -178,12 +178,9 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
           </Button>
         )}
         <div className={styles.goalActionsSlot} ref={setActionsPortalTarget} />
-        {reviewAcceptanceId && (
-          <Button size="small" type="primary" onClick={openReview}>
-            {t('goalProcess.gate.openReview')}
-          </Button>
-        )}
-        {item.type === 'signOff' && (
+        {/* One primary per card: a sign-off commits from its digest, a held
+            release is reviewed in its report — never both on one card. */}
+        {item.type === 'signOff' ? (
           <>
             <Button disabled={!!pending} size="small" onClick={openSignOff}>
               {t('goalProcess.signOff.openReport')}
@@ -199,6 +196,12 @@ const GoalDecisionCard = ({ item, onCollapse, onDismiss }: GoalDecisionCardProps
               {t('goalProcess.signOff.accept')}
             </Button>
           </>
+        ) : (
+          reviewAcceptanceId && (
+            <Button size="small" type="primary" onClick={openReview}>
+              {t('goalProcess.gate.openReview')}
+            </Button>
+          )
         )}
       </div>
     </div>
