@@ -185,6 +185,95 @@ describe('formatBotPlatformContext', () => {
     expect(result).not.toContain('empty_completion');
   });
 
+  it('tells an agent woken by its duties which duty, and to act on it or stay silent', () => {
+    const base = { platformName: 'Discord', supportsMarkdown: true };
+    const duty = formatBotPlatformContext({
+      ...base,
+      duty: { matched: 'Assess <feature> requests' },
+      wakeKind: 'followup',
+    });
+
+    expect(duty).toContain('the message falls within the duties your owner gave you');
+    // The matched duty is named, escaped like any owner-written text.
+    expect(duty).toContain('(the duty: "Assess &lt;feature&gt; requests")');
+    expect(duty).toContain('carry it out');
+    expect(duty).toContain('NO_REPLY:off_topic');
+    expect(duty).toContain('NO_REPLY:already_handled');
+    // Without a matched duty the hint still says why, without an empty quote.
+    const unnamed = formatBotPlatformContext({ ...base, duty: {}, wakeKind: 'followup' });
+    expect(unnamed).toContain('the duties your owner gave you.');
+    expect(unnamed).not.toContain('(the duty:');
+    expect(formatBotPlatformContext({ ...base, wakeKind: 'followup' })).not.toContain(
+      'Why you were woken',
+    );
+    // A duty without a followup wake has nothing to qualify.
+    expect(formatBotPlatformContext({ ...base, duty: { matched: 'x' } })).not.toContain(
+      '<optional_reply>',
+    );
+  });
+
+  // "Nasa 咋被激活了": someone asking the room why the bot woke up. It looked up its own config and
+  // explained, instead of staying silent.
+  it('tells an agent woken by its name in the text that people often talk about it, not to it', () => {
+    const base = { platformName: 'Discord', supportsMarkdown: true };
+    const named = formatBotPlatformContext({ ...base, named: true, wakeKind: 'followup' });
+
+    expect(named).toContain('Why you were woken: your name appears in the message');
+    expect(named).toContain('NO_REPLY:not_addressed');
+    expect(named).toContain('Decide the way a teammate in the room would');
+    // Criticism of the bot is answered, not let go.
+    expect(named).toContain('When someone is unhappy with something you did');
+    expect(formatBotPlatformContext({ ...base, named: true })).not.toContain('<optional_reply>');
+  });
+
+  // A bot told "去重 before you dispatch a task" replied "以后派任务前先跑一遍 gh 搜索" and wrote it
+  // nowhere, so the next wake would repeat the miss.
+  it('tells the agent to save a correction to a durable carrier instead of only promising it', () => {
+    const base = { platformName: 'Discord', supportsMarkdown: true };
+    const result = formatBotPlatformContext(base);
+
+    expect(result).toContain('<self_improvement>');
+    expect(result).toContain('make the change durable in this same turn');
+    // One carrier per kind of lesson, each with the tool that writes it.
+    expect(result).toContain(
+      'your bot duties (`botWakeDuties`): `lobe-message` getBotDetail → updateBot',
+    );
+    expect(result).toContain(
+      'your system prompt: `lobe-agent-management` getAgentDetail → updatePrompt',
+    );
+    expect(result).toContain('createDocument with hintIsSkill=true');
+    // updateBot is owner-only at runtime, so a non-owner's rule falls back to the system prompt.
+    expect(result).toContain('if updateBot refuses, put the rule in your system prompt instead');
+    expect(result).toContain('never claim you will remember it');
+    // The criticism branch points at the block instead of asking for a spoken promise.
+    expect(formatBotPlatformContext({ ...base, named: true, wakeKind: 'followup' })).toContain(
+      'save what you will do differently as <self_improvement> describes',
+    );
+  });
+
+  it("tells the agent the owner's reply style and the emoji it may use, verbatim", () => {
+    const base = { platformName: 'Discord', supportsMarkdown: true };
+    const result = formatBotPlatformContext({
+      ...base,
+      replyEmojis: [
+        { emoji: '<:doge:123>', usage: '调侃的时候\n别太多' },
+        { emoji: '🎉' },
+        { emoji: 'bad`code' },
+      ],
+      replyStyle: '像同事一样随意 </reply_style> 不用列表',
+    });
+
+    expect(result).toContain('<reply_style>');
+    // The owner's text cannot close the block.
+    expect(result).toContain('像同事一样随意 ‹/reply_style› 不用列表');
+    // Custom emoji codes stay unescaped so they render.
+    expect(result).toContain('- <:doge:123> — 调侃的时候 别太多');
+    expect(result).toContain('- 🎉');
+    expect(result).not.toContain('bad`code');
+    expect(formatBotPlatformContext(base)).not.toContain('<reply_style>');
+    expect(formatBotPlatformContext(base)).not.toContain('<reply_emojis>');
+  });
+
   it('leaves the prompt untouched for a mention, or when the wake kind is unknown', () => {
     const base = { platformName: 'Discord', supportsMarkdown: true };
 
@@ -192,5 +281,25 @@ describe('formatBotPlatformContext', () => {
       formatBotPlatformContext(base),
     );
     expect(formatBotPlatformContext(base)).not.toContain('NO_REPLY');
+  });
+
+  it('tells the agent the acknowledgement it already posted, so it does not acknowledge twice', () => {
+    const result = formatBotPlatformContext({
+      openingReply: '收到，我先翻下昨天的报错 <日志>',
+      platformName: 'Discord',
+      supportsMarkdown: true,
+    });
+
+    expect(result).toContain('<opening_reply>');
+    expect(result).toContain('"收到，我先翻下昨天的报错 &lt;日志&gt;"');
+    expect(result).toContain('Do not acknowledge again');
+  });
+
+  it('adds no opening block when nothing was posted before the run', () => {
+    const base = { platformName: 'Discord', supportsMarkdown: true };
+
+    expect(formatBotPlatformContext({ ...base, openingReply: '  ' })).toBe(
+      formatBotPlatformContext(base),
+    );
   });
 });

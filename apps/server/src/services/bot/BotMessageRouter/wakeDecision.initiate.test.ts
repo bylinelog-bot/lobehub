@@ -101,18 +101,26 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
     const state = fakeState(spokeRecently());
     const recorder = make(WITH_CLASSIFIER('enforce'), state, { classify });
 
-    await expect(recorder.initiate(observation())).resolves.toEqual({ reason: 'named-in-text' });
+    await expect(recorder.initiate(observation())).resolves.toEqual({
+      addressed: true,
+      reason: 'named-in-text',
+    });
     expect(classify).not.toHaveBeenCalled();
   });
 
   it('wakes on the name even when the bot has not spoken lately', async () => {
     const recorder = make(ENFORCE, fakeState());
 
-    await expect(recorder.initiate(observation())).resolves.toEqual({ reason: 'named-in-text' });
+    await expect(recorder.initiate(observation())).resolves.toEqual({
+      addressed: true,
+      reason: 'named-in-text',
+    });
   });
 
-  it('does not initiate without a cue: not named, outside the window', async () => {
-    const classify = classifierAnswer(0.9);
+  // Outside the window only the duties may start a wake: the classifier's "is it for me?" no
+  // longer does, however sure it is.
+  it('does not initiate outside the window, and does not ask the classifier there', async () => {
+    const classify = classifierAnswer(0.99);
     const recorder = make(WITH_CLASSIFIER('enforce'), fakeState(), { classify });
 
     await expect(
@@ -145,7 +153,6 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
   it.each([
     { reason: 'scope none', rules: { scope: 'none' } },
     { reason: 'channel denied', rules: { denyChannels: ['c1'] } },
-    { reason: 'owner present', rules: { ownerPresenceSeconds: 600 } },
   ])('an owner rule still vetoes a message that names the bot ($reason)', async ({ rules }) => {
     const state = fakeState({ ...spokeRecently(), ownerLastSpokeAt: Date.now() - 1000 });
     const recorder = make({ botWake: { enabled: true, mode: 'enforce', rules } }, state);
@@ -155,6 +162,20 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
         observation({}, { author: { isBot: false, isMe: false, userId: 'someone-else' } }),
       ),
     ).resolves.toBeUndefined();
+  });
+
+  it('wakes when someone else names the bot while the owner is around', async () => {
+    const state = fakeState({ ownerLastSpokeAt: Date.now() - 10_000, silentWakes: 0 });
+    const recorder = make(
+      { botWake: { enabled: true, mode: 'enforce', rules: { ownerPresenceSeconds: 120 } } },
+      state,
+    );
+
+    await expect(
+      recorder.initiate(
+        observation({}, { author: { isBot: false, isMe: false, userId: 'someone-else' } }),
+      ),
+    ).resolves.toEqual({ addressed: true, reason: 'named-in-text' });
   });
 
   it('never wakes on its own message or another bot, even naming itself', async () => {
@@ -179,6 +200,7 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
       });
 
       await expect(recorder.initiate(observation({}, plain))).resolves.toEqual({
+        addressed: false,
         reason: 'followup-window',
       });
     });
@@ -207,6 +229,7 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
       const recorder = make(WITH_CLASSIFIER('shadow'), fakeState(spokeRecently()), { classify });
 
       await expect(recorder.initiate(observation({}, plain))).resolves.toEqual({
+        addressed: false,
         reason: 'followup-window',
       });
       expect(classify).toHaveBeenCalledTimes(1);
@@ -269,6 +292,7 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
       });
 
       await expect(recorder.initiate(observation({}, plain))).resolves.toEqual({
+        addressed: false,
         reason: 'followup-window',
       });
       expect((classify as any).mock.calls[0][0].conversation.agent).toBeUndefined();
@@ -290,9 +314,16 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
 
   it('follows the platform’s own name refresh: a renamed bot answers to the new name, not the old', async () => {
     const names = vi.fn(async () => ['Shadow Arvin']);
-    const recorder = make(ENFORCE, fakeState(), { botNames: names });
+    // Not sure the old name is for it: only the name can start the wake here.
+    const recorder = make(ENFORCE, fakeState(), {
+      botNames: names,
+      classify: classifierAnswer(0.1),
+    });
 
-    await expect(recorder.initiate(observation())).resolves.toEqual({ reason: 'named-in-text' });
+    await expect(recorder.initiate(observation())).resolves.toEqual({
+      addressed: true,
+      reason: 'named-in-text',
+    });
 
     // The platform client refreshed its names (the bot was renamed).
     names.mockResolvedValue(['Arvin Prime']);
@@ -302,7 +333,7 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
     ).resolves.toBeUndefined();
     await expect(
       recorder.initiate(observation({}, { id: 'm-3', text: 'Arvin Prime 听得到吗' })),
-    ).resolves.toEqual({ reason: 'named-in-text' });
+    ).resolves.toEqual({ addressed: true, reason: 'named-in-text' });
   });
 
   it('records the decision it made without asking the classifier a second time', async () => {
@@ -311,7 +342,10 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
     const recorder = make(WITH_CLASSIFIER('enforce'), state, { classify });
     const message = observation({}, { text: '那这个怎么处理?' });
 
-    expect(await recorder.initiate(message)).toEqual({ reason: 'followup-window' });
+    expect(await recorder.initiate(message)).toEqual({
+      addressed: false,
+      reason: 'followup-window',
+    });
     recorder.record({ ...message, outcome: 'wake', reason: 'followup-window' });
     await flush();
 
@@ -328,13 +362,36 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
     const state = fakeState(spokeRecently());
     const recorder = make(ENFORCE, state);
 
-    expect(await recorder.initiate(observation())).toEqual({ reason: 'named-in-text' });
+    expect(await recorder.initiate(observation())).toEqual({
+      addressed: true,
+      reason: 'named-in-text',
+    });
     recorder.record({ ...observation(), outcome: 'wake', reason: 'named-in-text' });
     await flush();
 
     const [decision] = recorded();
     expect(decision.toTag).toBe('named');
     expect(decision.metadata.stateSnapshot.conversation.botNames).toEqual([BOT_NAME]);
+  });
+
+  it('records the enforcing rule that stopped a named wake, not a shadow replay of it', async () => {
+    const recorder = make(
+      { botWake: { enabled: true, mode: 'enforce', rules: { denyChannels: ['c1'] } } },
+      fakeState(),
+    );
+
+    expect(await recorder.initiate(observation())).toBeUndefined();
+    recorder.record(observation());
+    await flush();
+
+    const verdicts = recorded()[0].verdicts.map((verdict: any) => [
+      verdict.policyId,
+      verdict.mode,
+      verdict.verdict,
+      verdict.reason,
+    ]);
+    expect(verdicts).toContainEqual(['bot-wake:owner-rules', 'enforce', 'deny', 'channel-denied']);
+    expect(verdicts.some(([, mode]: string[]) => mode === 'shadow')).toBe(false);
   });
 
   it('a message that did not wake the bot is still recorded as it was judged', async () => {
@@ -349,6 +406,63 @@ describe('bot-wake recorder: initiating a wake nobody addressed', () => {
 
     expect(recorded()[0].outcome).toBe('skip');
     expect(classify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('bot-wake recorder: watch keywords marked as the bot names', () => {
+  const SOMEONE = { author: { isBot: false, isMe: false, userId: 'someone-else' } };
+  const OWNER_AROUND = {
+    botWake: { enabled: true, mode: 'enforce', rules: { ownerPresenceSeconds: 120 } },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRecordSignalDecision.mockResolvedValue({ persisted: false });
+  });
+
+  it('wakes as named-in-text on a keyword name, even when the platform name lookup fails', async () => {
+    const recorder = make(ENFORCE, fakeState(), {
+      botNames: async () => {
+        throw new Error('discord down');
+      },
+      classify: classifierAnswer(0.1),
+      nameKeywords: ['canis', '倏昱'],
+    });
+
+    await expect(recorder.initiate(observation({}, { text: 'canis 你看下这个' }))).resolves.toEqual(
+      { addressed: true, reason: 'named-in-text' },
+    );
+    await expect(
+      recorder.initiate(observation({}, { id: 'm-2', text: '倏昱在吗' })),
+    ).resolves.toEqual({ addressed: true, reason: 'named-in-text' });
+  });
+
+  it('hands the classifier the keyword names beside the platform names', async () => {
+    const classify = classifierAnswer(0.9);
+    const recorder = make(WITH_CLASSIFIER('enforce'), fakeState(spokeRecently()), {
+      classify,
+      nameKeywords: ['canis'],
+    });
+
+    await recorder.initiate(observation({}, { text: 'what about the release?' }));
+
+    const [input] = (classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(input.conversation.botNames).toEqual([BOT_NAME, 'canis']);
+  });
+
+  it('keeps a keyword-name wake from being vetoed by owner presence; a plain keyword still is', async () => {
+    const state = fakeState({ ownerLastSpokeAt: Date.now() - 10_000, silentWakes: 0 });
+    const recorder = make(OWNER_AROUND, state, { nameKeywords: ['canis'] });
+    const keywordWake = (text: string) =>
+      observation({ outcome: 'wake', reason: 'watch-keyword' }, { ...SOMEONE, text });
+
+    expect(
+      (await recorder.judge(keywordWake('canis, can you check the build?')))?.verdict,
+    ).not.toBe('deny');
+    expect(await recorder.judge(keywordWake('the mobile build is broken'))).toMatchObject({
+      reason: 'owner-present',
+      verdict: 'deny',
+    });
   });
 });
 

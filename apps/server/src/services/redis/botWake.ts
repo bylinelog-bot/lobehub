@@ -22,6 +22,8 @@ const getClient = () => getRedisServiceClient('botWake');
 const CHANNEL_TTL_SECONDS = 24 * 60 * 60;
 const SCHEDULER_TTL_SECONDS = 24 * 60 * 60;
 const CLASSIFIER_CALLS_TTL_SECONDS = 2 * 60 * 60;
+// As long as a parked message can wait for its replay (`deferredMessages` TTL).
+const INITIATION_TTL_SECONDS = 30 * 60;
 // A channel's recent messages are context for the next judgement, not an archive: an idle channel
 // loses them after three days, and an active one never holds more than the newest 200.
 const CONVERSATION_LOG_TTL_SECONDS = 3 * 24 * 60 * 60;
@@ -40,6 +42,8 @@ const LOCK_RETRY_MS = 30;
 /** What the wake policies read about one channel or thread; epoch ms. */
 export interface BotWakeChannelFields {
   botLastSpokeAt?: number;
+  /** Platform id of the person whose message last woke the bot here: who a follow-up is from. */
+  followupAuthorId?: string;
   followupUntil?: number;
   ownerLastSpokeAt?: number;
   silentWakes: number;
@@ -54,6 +58,7 @@ const toNumber = (value: string | undefined) => {
 
 const parseFields = (hash: Record<string, string> | null | undefined): BotWakeChannelFields => ({
   botLastSpokeAt: toNumber(hash?.botLastSpokeAt),
+  followupAuthorId: hash?.followupAuthorId || undefined,
   followupUntil: toNumber(hash?.followupUntil),
   ownerLastSpokeAt: toNumber(hash?.ownerLastSpokeAt),
   silentWakes: toNumber(hash?.silentWakes) ?? 0,
@@ -61,7 +66,8 @@ const parseFields = (hash: Record<string, string> | null | undefined): BotWakeCh
 
 /**
  * Merges the states of the keys a conversation is filed under (channel and Discord thread).
- * Times take the latest; the silent-wake count takes the highest, the stricter reading.
+ * Times take the latest; the silent-wake count takes the highest, the stricter reading. The
+ * follow-up author comes from the key whose window ends last, the window it belongs to.
  */
 export const mergeBotWakeChannelFields = (
   fields: readonly BotWakeChannelFields[],
@@ -72,18 +78,32 @@ export const mergeBotWakeChannelFields = (
     return values.length > 0 ? Math.max(...values) : undefined;
   };
 
+  const followupUntil = max((field) => field.followupUntil);
+  const windowOwner =
+    followupUntil === undefined
+      ? undefined
+      : fields.find((field) => field.followupUntil === followupUntil);
+
   return {
     botLastSpokeAt: max((field) => field.botLastSpokeAt),
-    followupUntil: max((field) => field.followupUntil),
+    followupAuthorId: windowOwner?.followupAuthorId,
+    followupUntil,
     ownerLastSpokeAt: max((field) => field.ownerLastSpokeAt),
     silentWakes: Math.max(0, ...fields.map((field) => field.silentWakes)),
   };
 };
 
-/** KEYS = channel hashes; ARGV[1] = ttl; ARGV[2] = botLastSpokeAt; ARGV[3] = followupUntil */
+/**
+ * KEYS = channel hashes, the conversation the bot spoke in last; ARGV[1] = ttl;
+ * ARGV[2] = botLastSpokeAt; ARGV[3] = followupUntil. Resets the silent-wake count on every key,
+ * opens the window on the last one only.
+ */
 const BOT_SPOKE_SCRIPT = `
 for i = 1, #KEYS do
-  redis.call('HSET', KEYS[i], 'botLastSpokeAt', ARGV[2], 'followupUntil', ARGV[3], 'silentWakes', '0')
+  redis.call('HSET', KEYS[i], 'silentWakes', '0')
+  if i == #KEYS then
+    redis.call('HSET', KEYS[i], 'botLastSpokeAt', ARGV[2], 'followupUntil', ARGV[3])
+  end
   redis.call('EXPIRE', KEYS[i], ARGV[1])
 end
 return 1
@@ -187,6 +207,35 @@ export const botWake = {
   },
 
   /**
+   * Keeps the wake decided for a message, so the replay of a parked message reuses it. Never
+   * throws: without it the replay judges again, as it did before.
+   */
+  async rememberInitiation(applicationId: string, messageId: string, value: string) {
+    try {
+      const redis = await getClient();
+      if (!redis) return;
+
+      await redis.set(RedisKeys.botWake.initiation(applicationId, messageId), value, {
+        ex: INITIATION_TTL_SECONDS,
+      });
+    } catch (error) {
+      log('rememberInitiation failed: %O', error);
+    }
+  },
+
+  /** The wake decided for a message, as `rememberInitiation` stored it; `undefined` otherwise. */
+  async readInitiation(applicationId: string, messageId: string) {
+    try {
+      const redis = await getClient();
+      if (!redis) return;
+
+      return (await redis.get(RedisKeys.botWake.initiation(applicationId, messageId))) ?? undefined;
+    } catch (error) {
+      log('readInitiation failed: %O', error);
+    }
+  },
+
+  /**
    * Counts one classifier call against the bot's UTC hour. `undefined` without Redis, so the
    * caller decides whether to spend.
    */
@@ -224,6 +273,25 @@ export const botWake = {
     }
   },
 
+  /**
+   * A message woke the bot: remember whose, on the conversation's own key, so a follow-up window
+   * the reply opens there counts that person's next words and not everyone else's.
+   */
+  async recordWakeAuthor(key: string, authorId: string) {
+    try {
+      const redis = await getClient();
+      if (!redis) return;
+
+      const channelKey = RedisKeys.botWake.channel(key);
+      const pipeline = redis.pipeline();
+      pipeline.hset(channelKey, 'followupAuthorId', authorId);
+      pipeline.expire(channelKey, CHANNEL_TTL_SECONDS);
+      await pipeline.exec();
+    } catch (error) {
+      log('recordWakeAuthor failed: %O', error);
+    }
+  },
+
   /** The owner posted: remember when, so the bot can stay out of their conversation. */
   async recordOwnerSpoke(keys: readonly string[], at: number) {
     try {
@@ -243,8 +311,9 @@ export const botWake = {
   },
 
   /**
-   * The bot posted a reply. Opens the follow-up window and resets the silent-wake budget, on
-   * every key given (the Discord channel and its thread).
+   * The bot posted a reply. Resets the silent-wake budget on every key given (the Discord channel
+   * and its thread) and opens the follow-up window on the last one, the conversation the bot spoke
+   * in: a reply in a Discord thread must not make the whole channel a follow-up to it.
    */
   async recordBotSpoke(keys: readonly string[], at: number, windowMs: number) {
     try {

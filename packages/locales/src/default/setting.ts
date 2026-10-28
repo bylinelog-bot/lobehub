@@ -69,7 +69,6 @@ export default {
   'completionSound.banner.previewBody': 'This is how a finished chat will sound in the background.',
   'completionSound.banner.systemMuted':
     'macOS has notification sounds turned off for LobeHub, so background notifications stay silent. Turn them back on in System Settings › Notifications › LobeHub.',
-
   '_cloud.officialProvider': '{{name}} Official Model Service',
   'about.title': 'About',
   'agentImport.action': 'Copy to Workspace...',
@@ -1953,13 +1952,19 @@ When I am ___, I need ___
   'trash.projectUnavailable.title': 'This project is no longer available',
   'trash.purgeConfirm.content': 'Permanently delete "{{title}}"? This cannot be undone.',
   'trash.purgeConfirm.title': 'Delete forever',
+  'trash.restore.failed.conflict':
+    'This message already has a newer thread. Move that thread to trash first, then restore this one.',
   'trash.restore.failed.notFound': 'This item no longer exists.',
   'trash.restore.failed.parentTrashed':
-    'Its agent, topic or previous message is still in the trash. Restore that first.',
+    'Its agent, topic, channel or previous message is still in the trash. Restore that first.',
   'trash.restore.success': 'Restored',
+  'trash.purge.blocked':
+    '{{count}} item(s) are still finishing their work and stayed in the trash. Try again in a moment.',
   'trash.purge.success': 'Deleted permanently',
   'trash.title': 'Trash',
   'trash.type.agent': 'Agent',
+  'trash.type.channel': 'Channel',
+  'trash.type.channelThread': 'Channel thread',
   'trash.type.dashboard': 'Dashboard',
   'trash.type.message': 'Message',
   'trash.type.topic': 'Topic',
@@ -2584,6 +2589,7 @@ When I am ___, I need ___
   'workspace.auditLog.actions.member.invited': 'Member invited',
   'workspace.auditLog.actions.member.joined': 'Member joined',
   'workspace.auditLog.actions.member.left': 'Member left',
+  'workspace.auditLog.actions.member.profile_updated': 'Member profile changed',
   'workspace.auditLog.actions.member.promoted_to_owner': 'Promoted to owner',
   'workspace.auditLog.actions.member.removed': 'Member removed',
   'workspace.auditLog.actions.member.role_updated': 'Member role changed',
@@ -3057,6 +3063,7 @@ When I am ___, I need ___
     'This URL is reserved for a protected brand. If you own this brand, apply from your organization email and we’ll review your request shortly.',
   'workspace.slugBrandApply.modalTitle': 'Request a protected brand URL',
   'workspace.member.demote': 'Demote to member',
+  'workspace.member.editProfile': 'Edit profile...',
   'workspace.member.demoteConfirm.content': 'This member will lose owner privileges.',
   'workspace.member.demoteConfirm.title': 'Demote owner?',
   'workspace.member.invite': 'Invite members',
@@ -3068,6 +3075,15 @@ When I am ___, I need ___
   'workspace.member.manageAccessModal.save': 'Save Changes',
   'workspace.member.manageAccessModal.success': 'Access updated',
   'workspace.member.manageAccessModal.title': 'Change role for {{username}}',
+  'workspace.member.profileModal.failed': 'Failed to update profile',
+  'workspace.member.profileModal.jobTitle': 'Job title',
+  'workspace.member.profileModal.jobTitlePlaceholder': 'e.g. Product Designer',
+  'workspace.member.profileModal.responsibilities': 'Responsibilities',
+  'workspace.member.profileModal.responsibilitiesPlaceholder':
+    'What this person owns and works on, so teammates and AI know who to ask',
+  'workspace.member.profileModal.save': 'Save',
+  'workspace.member.profileModal.success': 'Profile updated',
+  'workspace.member.profileModal.title': 'Edit profile for {{username}}',
   'workspace.member.promote': 'Promote to owner',
   'workspace.member.transferPrimaryConfirm.billingNotice.acknowledge':
     'I understand the saved payment method will keep being charged until the new Owner replaces it.',
@@ -3188,6 +3204,7 @@ When I am ___, I need ___
   'workspace.waitlistPage.useCasePlaceholder':
     'Who is involved, how you collaborate, what you want solved?',
   'workspace.members.columns.joinedAt': 'Joined',
+  'workspace.members.columns.jobTitle': 'Position',
   'workspace.members.columns.name': 'Name',
   'workspace.members.columns.role': 'Role',
   'workspace.members.empty': 'No members yet',
@@ -3261,7 +3278,7 @@ When I am ___, I need ___
   'workspace.members.seatUsage_one': '{{used}} / {{capacity}} seat',
   'workspace.members.seatUsage_other': '{{used}} / {{capacity}} seats',
   'workspace.members.subtitle': 'Manage workspace members and invitations',
-  'workspace.members.tabs.members': 'Team Members',
+  'workspace.members.tabs.members': 'Members',
   'workspace.members.tabs.pending': 'Pending Invitations',
   'workspace.members.title': 'Members',
   'workspace.members.totalCount_one': '{{total}} member',

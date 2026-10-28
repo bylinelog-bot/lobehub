@@ -13,8 +13,10 @@ import {
   makeServerIdField,
   makeUserIdField,
   reactionModeField,
+  replyPlacementField,
   watchKeywordsField,
 } from '../const';
+import { replyStyleFields } from '../replyStyle';
 import type { FieldSchema } from '../types';
 import { DEFAULT_SLACK_CONNECTION_MODE, MAX_SLACK_HISTORY_LIMIT } from './const';
 
@@ -117,6 +119,7 @@ export const schema: FieldSchema[] = [
         label: 'channel.showUsageStats',
         type: 'boolean',
       },
+      replyPlacementField,
       displayToolCallsField,
       reactionModeField,
       {
@@ -132,6 +135,7 @@ export const schema: FieldSchema[] = [
       ...makeGroupPolicyFields({ policy: 'open' }),
       allowFromField,
       watchKeywordsField,
+      ...replyStyleFields,
     ],
     type: 'object',
   },

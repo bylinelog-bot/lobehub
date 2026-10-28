@@ -29,16 +29,36 @@ export interface BridgeHandlerOpts {
   client?: PlatformClient;
   displayToolCalls?: boolean;
   /**
+   * The bot woke on its own because a message nobody addressed to it falls within its duties (a
+   * `followup` wake); `matched` names the duty. The agent is told why. See
+   * `formatBotPlatformContext`.
+   */
+  duty?: { matched?: string };
+  /**
+   * The bot woke only because its name is in the text (a `followup` wake): people often talk about
+   * it rather than to it, and the agent is told so. See `formatBotPlatformContext`.
+   */
+  named?: boolean;
+  /**
+   * The short acknowledgement already posted before the run ("Got it, I'll check the logs
+   * first"), so the agent continues from it instead of acknowledging again.
+   */
+  openingReply?: string;
+  /**
    * Status-reaction verbosity (see `BotReactionMode`). Defaults to
    * `DEFAULT_BOT_REACTION_MODE` for callers that predate the setting.
    */
   reactionMode?: BotReactionMode;
+  /** Emoji the owner lets the bot use; told to the agent. See `formatBotPlatformContext`. */
+  replyEmojis?: { emoji: string; usage?: string }[];
   /**
    * Locale for system-generated reply text (errors, stopped notice, etc.).
    * Picked per platform — see `getBotReplyLocale`. When omitted we fall back
    * to inferring from `botContext.platform`, then to English.
    */
   replyLocale?: BotReplyLocale;
+  /** How the bot talks in this conversation, as the owner wrote it. See `formatBotPlatformContext`. */
+  replyStyle?: string;
   /**
    * How the bot was woken. `followup` lets the agent end in silence and holds back every visible
    * side effect (reaction, typing, progress message) until it decides to speak; `mention`

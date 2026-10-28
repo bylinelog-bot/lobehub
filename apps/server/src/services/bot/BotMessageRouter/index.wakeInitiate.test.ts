@@ -15,8 +15,11 @@ import {
 } from './testUtils';
 
 const mocks = vi.hoisted(() => ({
+  defer: vi.fn(),
+  submit: vi.fn(),
   channel: { current: undefined as Record<string, unknown> | undefined },
   classify: vi.fn(),
+  duty: vi.fn(),
   logs: new Map<string, any[]>(),
   record: vi.fn(),
 }));
@@ -40,9 +43,15 @@ vi.mock('@/server/services/redis', () => ({
 }));
 vi.mock('../wake/scheduler', () => ({
   recordWakeRunOutcome: vi.fn(),
-  resolveWakeScheduler: () => undefined,
+  resolveWakeScheduler: (_platform: string, _app: string, settings: any) =>
+    settings?.botWake?.scheduler?.mode === 'enforce' ? { submit: mocks.submit } : undefined,
 }));
-vi.mock('../wake/classify', () => ({ createWakeClassify: () => mocks.classify }));
+vi.mock('../wake/classify', () => ({
+  createWakeClassify: () => mocks.classify,
+}));
+vi.mock('../wake/dutyJudge', () => ({
+  createWakeDutyJudge: () => mocks.duty,
+}));
 vi.mock('../wake/identity', () => ({
   createWakeIdentityLoader: () => async () => ({
     agentName: 'Arvin Agent',
@@ -70,7 +79,10 @@ vi.mock('@chat-adapter/state-ioredis', async () =>
   (await import('./testUtils')).stateIoredisModule(),
 );
 vi.mock('chat', async () => (await import('./testUtils')).chatModule());
-vi.mock('../deferredMessages', async () => (await import('./testUtils')).deferredMessagesModule());
+vi.mock('../deferredMessages', async () => ({
+  ...(await import('./testUtils')).deferredMessagesModule(),
+  deferBotMessages: mocks.defer,
+}));
 vi.mock('../mergeMessages', async (importOriginal) =>
   (await import('./testUtils')).mergeMessagesModule(importOriginal),
 );
@@ -132,7 +144,10 @@ describe('BotMessageRouter: a message that only names the bot', () => {
     mockGetBotFeatureAccessState.mockResolvedValue({ allowed: true });
     mockGetBotNames.mockResolvedValue([BOT_NAME]);
     mocks.record.mockResolvedValue({ persisted: false });
+    mocks.defer.mockResolvedValue(true);
+    mocks.submit.mockResolvedValue('hold');
     mocks.classify.mockResolvedValue({ addressedToBot: 0.02, kind: 'chitchat', reason: 'x' });
+    mocks.duty.mockResolvedValue({ duty: '评估需求', inDuty: 0.1, reason: 'p=0.10' });
   });
 
   const enforcing = { enabled: true, mode: 'enforce' };
@@ -146,11 +161,89 @@ describe('BotMessageRouter: a message that only names the bot', () => {
     await flush();
 
     expect(mockHandleMention).toHaveBeenCalledTimes(1);
-    expect(mockHandleMention.mock.calls[0][2]).toMatchObject({ wakeKind: 'followup' });
+    expect(mockHandleMention.mock.calls[0][2]).toMatchObject({ named: true, wakeKind: 'followup' });
     expect(decisions().map((d) => [d.outcome, d.finalReason, d.toTag])).toEqual([
       ['wake', 'named-in-text', 'named'],
     ]);
     expect(mocks.classify).not.toHaveBeenCalled();
+  });
+
+  it('steps in for a message within its duties, from anyone, and tells the agent which duty', async () => {
+    mocks.duty.mockResolvedValue({ duty: '评估需求', inDuty: 0.9, reason: 'p=0.90' });
+    await boot({ ...enforcing, duties: { text: '群里有人描述需求时评估一下' } });
+
+    await catchAll()(
+      thread(),
+      message({
+        author: { isBot: false, userId: 'bob-id', userName: 'bob' },
+        text: '要是导出能保留文件夹结构就好了',
+      }),
+    );
+    await flush();
+
+    expect(mockHandleMention).toHaveBeenCalledTimes(1);
+    expect(mockHandleMention.mock.calls[0][2]).toMatchObject({
+      duty: { matched: '评估需求' },
+      wakeKind: 'followup',
+    });
+    expect(decisions().map((d) => [d.outcome, d.finalReason, d.toTag])).toEqual([
+      ['wake', 'in-duty', 'duty'],
+    ]);
+  });
+
+  it('stays out of an owner remark it could help with when it has no duties, without asking', async () => {
+    await boot(enforcing);
+
+    await catchAll()(
+      thread(),
+      message({ text: '这个 UI 一眼看上去还是太 vibe 了，得想想怎么refine' }),
+    );
+    await flush();
+
+    expect(mockHandleMention).not.toHaveBeenCalled();
+    expect(mocks.duty).not.toHaveBeenCalled();
+  });
+
+  describe('with the scheduler enforcing', () => {
+    const scheduled = { ...enforcing, scheduler: { mode: 'enforce' } };
+
+    it('answers a message that names the bot at once: it is addressed, so it does not wait out the collect window', async () => {
+      mocks.channel.current = { botLastSpokeAt: Date.now() - 60_000, silentWakes: 0 };
+      await boot(scheduled);
+
+      await catchAll()(thread(), message());
+      await flush();
+
+      expect(mockHandleMention).toHaveBeenCalledTimes(1);
+      expect(mocks.submit).not.toHaveBeenCalled();
+      expect(mocks.defer).not.toHaveBeenCalled();
+      expect(decisions().map((d) => [d.outcome, d.finalReason])).toEqual([
+        ['wake', 'named-in-text'],
+      ]);
+    });
+
+    it('does the same in a subscribed thread', async () => {
+      await boot(scheduled);
+
+      await subscribed()(thread(`${CHANNEL}:thread-1`), message());
+
+      expect(mockHandleSubscribedMessage).toHaveBeenCalledTimes(1);
+      expect(mocks.submit).not.toHaveBeenCalled();
+    });
+
+    it('still parks chatter that only arrives inside the follow-up window', async () => {
+      mocks.channel.current = { botLastSpokeAt: Date.now() - 60_000, silentWakes: 0 };
+      mocks.classify.mockResolvedValue({ addressedToBot: 0.9, kind: 'request', reason: 'x' });
+      await boot({ ...scheduled, classifier: { mode: 'enforce', threshold: 0.5 } });
+
+      await catchAll()(thread(), message({ text: '那现在呢?' }));
+      await flush();
+
+      expect(mockHandleMention).not.toHaveBeenCalled();
+      expect(mocks.submit).toHaveBeenCalledTimes(1);
+      expect(mocks.defer).toHaveBeenCalledTimes(1);
+      expect(decisions().map((d) => [d.outcome, d.finalReason])).toEqual([['defer', 'scheduled']]);
+    });
   });
 
   it('is still intercepted while the rules only shadow: nothing changes until the owner opts in', async () => {

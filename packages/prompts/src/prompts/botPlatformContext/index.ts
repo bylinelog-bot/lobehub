@@ -50,9 +50,32 @@ export interface BotPlatformInfo {
   canReadHistory?: boolean;
   /** Identifiers of the conversation this run is replying in. */
   currentChannel?: CurrentBotChannel;
+  /**
+   * The bot woke on its own because a message nobody addressed to it falls within its duties (a
+   * `followup` wake). `matched` names the duty, when the judgement said which. The agent is told
+   * why, so it acts on the duty or stays silent.
+   */
+  duty?: { matched?: string };
+  /**
+   * The bot woke only because its name is in the text, with no @-mention or reply (a `followup`
+   * wake). The agent is told people often talk about it rather than to it.
+   */
+  named?: boolean;
+  /**
+   * The short acknowledgement already posted to the user before this run started ("Got it, I'll
+   * check the logs first"). The agent continues from it instead of acknowledging again.
+   */
+  openingReply?: string;
   platformName: string;
   /** Pre-injected recent same-channel history (cross-session). */
   recentChannelHistory?: RecentChannelHistory;
+  /**
+   * Emoji and stickers the owner lets the bot use, pasted as written (`<:doge:123>`, `:doge:`, 🐶),
+   * each with when it fits.
+   */
+  replyEmojis?: { emoji: string; usage?: string }[];
+  /** How the bot talks in this conversation, as the owner wrote it (the channel's or the default). */
+  replyStyle?: string;
   supportsMarkdown: boolean;
   /**
    * How the bot was woken. On `followup` the agent is told it may stay silent; on `mention` (or
@@ -83,8 +106,13 @@ const sanitize = (text: string) =>
 export const formatBotPlatformContext = ({
   canReadHistory = true,
   currentChannel,
+  duty,
+  named,
+  openingReply,
   platformName,
   recentChannelHistory,
+  replyEmojis,
+  replyStyle,
   supportsMarkdown,
   wakeKind,
   warnings,
@@ -110,6 +138,21 @@ export const formatBotPlatformContext = ({
     '- Keep responses concise and conversational — IM platforms have character limits and small viewports. Avoid long preambles or formal structure unless the question demands it.',
     '- Do NOT reference UI elements from other environments (e.g. "check the sidebar", "click the button above").',
     '</behavior>',
+    '',
+    // A bot run ends with the reply, so "next time I'll…" said in chat is gone
+    // by the next wake. Anyone who can wake the bot may steer it; the runtime
+    // still keeps bot settings to the owner (`updateBot` refuses others).
+    '<self_improvement>',
+    'When someone here tells you how to do better — corrects a mistake, says what to do next time, or gives a standing rule — make the change durable in this same turn. A promise only said in chat ("next time I will…") is lost when this run ends.',
+    'Pick where it goes by what the lesson is (activate the tool first if it is not loaded):',
+    "- When you should step in, in this channel → your bot duties (`botWakeDuties`): `lobe-message` getBotDetail → updateBot. Only the bot's owner may change bot settings; if updateBot refuses, put the rule in your system prompt instead.",
+    '- How you talk here (tone, length, emoji) → your bot reply style: `replyStyle` for every channel, `channelReplyStyles` for one channel, `replyEmojis` for the emoji you may use; same tools and owner rule as the duties.',
+    '- How you work, wherever you are asked → your system prompt: `lobe-agent-management` getAgentDetail → updatePrompt, with your own id from `current_agent`.',
+    '- A multi-step procedure or checklist you will reuse → `lobe-agent-documents` createDocument with hintIsSkill=true.',
+    '- Facts, references or a longer spec → `lobe-agent-documents` createDocument; when it must be read before some task, also say so in your system prompt.',
+    'Read the current content first and edit in place: keep everything you did not mean to change, and do not add a rule that is already there.',
+    'Then say in one line what you changed and where. If nothing could be saved (no tool, or it refused), say the lesson was not saved — never claim you will remember it.',
+    '</self_improvement>',
     '',
     '<message_delivery>',
     'Your text response is AUTOMATICALLY delivered to the current conversation — the runtime pipeline handles it.',
@@ -148,6 +191,17 @@ export const formatBotPlatformContext = ({
     );
   }
 
+  if (openingReply?.trim()) {
+    lines.push(
+      '',
+      '<opening_reply>',
+      'You already posted this acknowledgement to the user, before starting:',
+      `"${sanitize(openingReply.trim())}"`,
+      'Do not acknowledge again or repeat it. Do the work it announced and reply with the result.',
+      '</opening_reply>',
+    );
+  }
+
   if (wakeKind === 'followup') {
     lines.push(
       '',
@@ -156,7 +210,45 @@ export const formatBotPlatformContext = ({
       `If you have nothing worth adding — the message is not for you, is off topic, repeats something already answered, or was already handled — end your turn with exactly \`${BOT_NO_REPLY_TOKEN}\` and no other text.`,
       `You may append a reason: \`${BOT_NO_REPLY_TOKEN}:<reason>\`, where reason is one of ${BOT_NO_REPLY_REASONS.filter((r) => r !== 'empty_completion').join(', ')}.`,
       'Stay silent rather than posting filler. If you do have something useful to say, just reply normally.',
+      ...(named
+        ? [
+            `Why you were woken: your name appears in the message, but nobody @-mentioned you or replied to you. People often talk about you rather than to you: commenting on what you did, joking, or asking each other why you spoke up. Decide the way a teammate in the room would: speak when the message asks you to do or answer something, or when you have something the conversation actually needs; let a passing remark or a joke about you go by and end with \`${BOT_NO_REPLY_TOKEN}:not_addressed\`. When someone is unhappy with something you did (you replied when you should not have, got it wrong, were too noisy), do respond: acknowledge it plainly, without defending yourself, and save what you will do differently as <self_improvement> describes.`,
+          ]
+        : []),
+      ...(duty
+        ? [
+            `Why you were woken: nobody addressed you, but the message falls within the duties your owner gave you${duty.matched?.trim() ? ` (the duty: "${sanitize(duty.matched.trim())}")` : ''}. Read the conversation first. If the duty applies, carry it out the way a teammate holding it would: do the work it describes, and say what you did or will do. If on a closer look it does not apply, end with \`${BOT_NO_REPLY_TOKEN}:off_topic\`; if someone is already handling it, with \`${BOT_NO_REPLY_TOKEN}:already_handled\`.`,
+          ]
+        : []),
       '</optional_reply>',
+    );
+  }
+
+  // Owner-written; only the tag characters are escaped so the text cannot close the block.
+  const style = replyStyle?.trim().replaceAll('<', '‹').replaceAll('>', '›');
+  if (style) {
+    lines.push(
+      '',
+      '<reply_style>',
+      'How you talk in this conversation, as your owner wrote it. It shapes your tone and form, not what you do or whether you reply; where it conflicts with the platform rules below, the platform rules win.',
+      style,
+      '</reply_style>',
+    );
+  }
+
+  // Pasted verbatim: a custom emoji code (`<:doge:123>`) only renders unescaped. One line each.
+  const emojis = (replyEmojis ?? []).filter(({ emoji }) => emoji.trim() && !/[\n\r`]/.test(emoji));
+  if (emojis.length > 0) {
+    lines.push(
+      '',
+      '<reply_emojis>',
+      'Emoji and stickers you may use, one per line: write the code before the dash exactly as listed, without backticks around it. Use one when it fits the moment, the way people in this chat do; most replies need none, and never more than one or two. Do not write any other custom emoji code: one not on this list shows as broken text.',
+      ...emojis.map(({ emoji, usage }) =>
+        usage?.trim()
+          ? `- ${emoji.trim()} — ${usage.trim().replaceAll(/\s+/g, ' ')}`
+          : `- ${emoji.trim()}`,
+      ),
+      '</reply_emojis>',
     );
   }
 
