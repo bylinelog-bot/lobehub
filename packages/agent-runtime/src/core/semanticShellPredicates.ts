@@ -6,6 +6,7 @@ import {
   collectFlagLettersAndNames,
   isUnresolvableCommandWord,
   parameterExpansionOperand,
+  stripGroupingParens,
 } from './shellCommand';
 
 /**
@@ -78,7 +79,7 @@ const isRootWideGlobComponent = (component: string): boolean => {
 const isRootFamilyTargetLiteral = (word: string): boolean => {
   // A grouping paren can glue to the operand (`(rm -rf /)` tokenizes the
   // target as `/)`): `(`/`)` are shell operators, not part of the path.
-  const operand = word.replace(/^\(+/, '').replace(/\)+$/, '');
+  const operand = stripGroupingParens(word);
   if (operand.startsWith('{') && operand.endsWith('}')) {
     // Brace expansion (`{/,/etc}` → '/' and '/etc'): dangerous when any
     // member is a root-family shape.
@@ -105,18 +106,25 @@ const isRootFamilyTargetLiteral = (word: string): boolean => {
 const isRootFamilyTarget = withExpansionOperand(isRootFamilyTargetLiteral);
 
 /** Home-directory targets: ~, $HOME, /Users/<name>, /home/<name> (optional
- * trailing slash). Shared by the precise predicate and the scoped fallback. */
-const isHomeTarget = withExpansionOperand(
-  (word: string): boolean =>
-    word === '~' ||
-    word === '$HOME' ||
-    word === '~/' ||
-    word === '$HOME/' ||
-    /^\/(?:Users|home)\/[^/]+\/?$/.test(word),
-);
+ * trailing slash). Shared by the precise predicate and the scoped fallback.
+ * Grouping parens are stripped first: `(rm -rf ~)` leaves the operand as `~)`,
+ * and only the root family used to normalize that operator away. */
+const isHomeTarget = withExpansionOperand((word: string): boolean => {
+  const operand = stripGroupingParens(word);
+  return (
+    operand === '~' ||
+    operand === '$HOME' ||
+    operand === '~/' ||
+    operand === '$HOME/' ||
+    /^\/(?:Users|home)\/[^/]+\/?$/.test(operand)
+  );
+});
 
 /** Current-directory targets: '.' and './'. */
-const isDotTarget = withExpansionOperand((word: string): boolean => word === '.' || word === './');
+const isDotTarget = withExpansionOperand((word: string): boolean => {
+  const operand = stripGroupingParens(word);
+  return operand === '.' || operand === './';
+});
 
 /**
  * Per-predicate target families for the ambiguity fallback. The fallback

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { analyzeShellCommand } from './shellCommand';
+import { analyzeShellCommand, stripGroupingParens } from './shellCommand';
 
 describe('analyzeShellCommand', () => {
   describe('splitting', () => {
@@ -566,6 +566,40 @@ rm -rf ~`);
       expect(segs[0].resolvedCommand).toBe('cat');
       expect(segs[1].resolvedCommand).toBe('rm');
       expect(segs[1].homeTargets).toContain('~');
+    });
+
+    it('applies ANSI-C quote removal to a heredoc delimiter', () => {
+      // `<<$'EOF'` quote-removes to the delimiter `EOF`; keeping the `$` made
+      // the real terminator line never match, so the `rm -rf ~` below the
+      // heredoc was read as `cat` stdin data and escaped every predicate.
+      const segs = analyzeShellCommand("cat <<$'EOF'\nx\nEOF\nrm -rf ~");
+      expect(segs[0].resolvedCommand).toBe('cat');
+      expect(segs[0].words[1]).toBe('x\n');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+    });
+
+    it('decodes ANSI-C escapes inside a heredoc delimiter', () => {
+      // `$'E\x4fF'` decodes to `EOF`: the delimiter is the DECODED word, not
+      // the literal escape text.
+      const segs = analyzeShellCommand("cat <<$'E\\x4fF'\nx\nEOF\nrm -rf ~");
+      expect(segs[0].words[1]).toBe('x\n');
+      expect(segs[1].resolvedCommand).toBe('rm');
+      expect(segs[1].homeTargets).toContain('~');
+    });
+
+    it('a grouping paren does not hide the operand from target classification', () => {
+      // `(rm -rf ~)` tokenizes the target as `~)` because `(`/`)` are
+      // operators: classifying the raw word left homeTargets empty and every
+      // predicate missed the deletion.
+      const [home] = analyzeShellCommand('(rm -rf ~)');
+      expect(home.resolvedCommand).toBe('rm');
+      expect(home.homeTargets).toHaveLength(1);
+      expect(stripGroupingParens(home.homeTargets[0])).toBe('~');
+
+      const [slashed] = analyzeShellCommand('(rm -rf ~/)');
+      expect(slashed.trailingSlashTargets).toHaveLength(1);
+      expect(stripGroupingParens(slashed.trailingSlashTargets[0])).toBe('~/');
     });
 
     it('a heredoc delimiter ends at an operator without whitespace', () => {

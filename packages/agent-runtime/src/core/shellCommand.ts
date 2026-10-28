@@ -313,6 +313,17 @@ const splitIntoRawSegments = (command: string): string[] => {
         k++;
         continue;
       }
+      // ANSI-C quoting `$'…'` is still a QUOTED word: bash decodes the
+      // escapes and removes the `$` and quotes before the word becomes the
+      // terminator, so `<<$'EOF'` terminates at `EOF`. Keeping the `$` made
+      // the delimiter `$EOF`, the real terminator line never matched, and the
+      // `rm -rf ~` below the heredoc was read as `cat` stdin data.
+      if (ch === '$' && rest[k + 1] === "'") {
+        const decoded = decodeAnsiCQuoted(rest, k + 2);
+        word += decoded.value;
+        k = decoded.end;
+        continue;
+      }
       if (ch === '"' || ch === "'") {
         wordQuote = ch;
         k++;
@@ -856,12 +867,26 @@ const tokenizeWords = (raw: string): string[] => {
   return words;
 };
 
-const isHomePath = (word: string): boolean =>
-  word === '~' ||
-  word.startsWith('~/') ||
-  word === '$HOME' ||
-  word.startsWith('$HOME/') ||
-  /^\/(?:Users|home)\/[^/]+/.test(word);
+/**
+ * Grouping parentheses are shell OPERATORS, not part of the word they sit
+ * beside: the segment text `(rm -rf ~)` tokenizes as `(rm` / `-rf` / `~)`,
+ * because the tokenizer only splits on command separators. Strip the operator
+ * runs before classifying an operand — otherwise a subshell-wrapped home
+ * target stays `~)` and every predicate misses the real deletion.
+ */
+export const stripGroupingParens = (word: string): string =>
+  word.replace(/^\(+/, '').replace(/\)+$/, '');
+
+const isHomePath = (word: string): boolean => {
+  const operand = stripGroupingParens(word);
+  return (
+    operand === '~' ||
+    operand.startsWith('~/') ||
+    operand === '$HOME' ||
+    operand.startsWith('$HOME/') ||
+    /^\/(?:Users|home)\/[^/]+/.test(operand)
+  );
+};
 
 const isDashWord = (word: string): boolean => word.startsWith('-') && word.length > 1;
 
@@ -1211,9 +1236,10 @@ export const analyzeShellCommand = (command: string): ShellSegment[] => {
     const commandIndex = resolved ? resolved.index : -1;
     const flags = collectFlags(commandIndex >= 0 ? words.slice(commandIndex) : words);
     const argWords = commandIndex >= 0 ? words.slice(commandIndex + 1) : [];
-    const trailingSlashTargets = argWords.filter(
-      (word) => !isDashWord(word) && (word.endsWith('/') || isBareSlash(word)),
-    );
+    const trailingSlashTargets = argWords.filter((word) => {
+      const operand = stripGroupingParens(word);
+      return !isDashWord(word) && (operand.endsWith('/') || isBareSlash(operand));
+    });
     const homeTargets = argWords.filter((word) => !isDashWord(word) && isHomePath(word));
 
     const { letters, names } = collectFlagLettersAndNames(flags);

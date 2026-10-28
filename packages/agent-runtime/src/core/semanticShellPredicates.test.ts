@@ -108,6 +108,15 @@ describe('matchSemanticShellPredicate', () => {
       // Forwarding function: the call passes the home target to rm.
       'zap(){ rm -rf "$@"; }; zap ~',
       'zap(){ rm "$@"; }; zap -r ~/',
+      // Subshell operators glue to the operand (`~)`), so the target must be
+      // normalized before classification.
+      '(rm -rf ~)',
+      '(rm -rf ~); echo ~',
+      '(rm -rf ~/) && echo done',
+      // ANSI-C quoted heredoc delimiter quote-removes to `EOF`: the deletion
+      // below the heredoc must not be read as `cat` stdin data.
+      "cat <<$'EOF'\nx\nEOF\nrm -rf ~",
+      "cat <<$'E\\x4fF'\nx\nEOF\nrm -rf ~",
     ])('blocks: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(true);
     });
@@ -130,19 +139,29 @@ describe('matchSemanticShellPredicate', () => {
       '{echo,rm} -rf ~',
       // An escaped `;` is literal text, not a command separator: rm never runs.
       'echo x\\; rm -rf ~',
+      // Subshell without a deletion: stripping the operator must not turn an
+      // unrelated command into an rm call.
+      '(echo ~)',
+      '(ls ~); echo ~',
     ])('allows: %s', (command) => {
       expect(matchSemanticShellPredicate('rmRecursiveHomeTarget', command)).toBe(false);
     });
   });
 
   describe('rmForceDotTarget', () => {
-    it.each(['rm -rf .', 'rm -rf ./', 'rm -Rf .', 'sudo rm -rf .'])('blocks: %s', (command) => {
-      expect(matchSemanticShellPredicate('rmForceDotTarget', command)).toBe(true);
-    });
+    it.each(['rm -rf .', 'rm -rf ./', 'rm -Rf .', 'sudo rm -rf .', '(rm -rf .)'])(
+      'blocks: %s',
+      (command) => {
+        expect(matchSemanticShellPredicate('rmForceDotTarget', command)).toBe(true);
+      },
+    );
 
-    it.each(['rm -r .', 'rm -f .', 'rm -rf ./dist', 'rm file'])('allows: %s', (command) => {
-      expect(matchSemanticShellPredicate('rmForceDotTarget', command)).toBe(false);
-    });
+    it.each(['rm -r .', 'rm -f .', 'rm -rf ./dist', 'rm file', '(echo .)'])(
+      'allows: %s',
+      (command) => {
+        expect(matchSemanticShellPredicate('rmForceDotTarget', command)).toBe(false);
+      },
+    );
   });
 
   // Third review round (codex, PR #19386): `chroot NEWROOT COMMAND` runs
