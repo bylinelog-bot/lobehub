@@ -15,27 +15,26 @@ const styles = stylex.create({
   directory: { maxWidth: '100%', overflow: 'hidden' },
 });
 
-/** Issues the user resolves by choosing a device or directory, not by waiting. */
-const INPUT_ISSUES = new Set<ChannelAgentIssue>([
+/** Device issues of an inherited environment are fixed in the Agent's settings, not here. */
+const INHERITED_ISSUES = new Set<ChannelAgentIssue>([
   'deviceOffline',
   'deviceRequired',
   'deviceUnavailable',
-  'directoryRequired',
 ]);
-
-export const needsEnvironmentInput = (issue?: ChannelAgentIssue) =>
-  !!issue && INPUT_ISSUES.has(issue);
 
 export const deviceLabel = (device: DeviceListItem) =>
   device.friendlyName || device.hostname || device.deviceId;
 
 /** Where an Agent runs, in one line: `device · directory`. */
-export const environmentSummary = (draft: ChannelAgentDraft, devices: DeviceListResult) => {
+export const environmentSummary = (
+  draft: ChannelAgentDraft,
+  devices: DeviceListResult,
+  /** Shown when no directory is set and the device's home folder applies. */
+  homeDirectory: string,
+) => {
   if (!draft.deviceId) return;
   const device = devices.data?.find((item) => item.deviceId === draft.deviceId);
-  return [device ? deviceLabel(device) : draft.deviceId, draft.workingDirectory]
-    .filter(Boolean)
-    .join(' · ');
+  return `${device ? deviceLabel(device) : draft.deviceId} · ${draft.workingDirectory || homeDirectory}`;
 };
 
 type DraftControls = ReturnType<typeof useChannelAgentDraft>;
@@ -115,8 +114,11 @@ export const EnvironmentFields = ({
 /** Why an Agent cannot be saved yet, or that its settings are still loading. */
 export const EnvironmentIssue = ({
   controls: { draft, retry, sync },
+  inherited,
 }: {
   controls: DraftControls;
+  /** The Agent's own device and directory apply; there is nothing to pick here. */
+  inherited?: boolean;
 }) => {
   const { t } = useTranslation('channel');
   if (draft.issue === 'configurationFailed')
@@ -138,7 +140,9 @@ export const EnvironmentIssue = ({
       role="status"
       type={checking ? 'secondary' : 'danger'}
     >
-      {t(`environment.${draft.issue}`)}
+      {inherited && INHERITED_ISSUES.has(draft.issue)
+        ? t(`environment.inherited.${draft.issue}`)
+        : t(`environment.${draft.issue}`)}
     </Text>
   );
 };

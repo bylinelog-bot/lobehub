@@ -19,7 +19,6 @@ export default {
     'This Agent is no longer available. Remove it and choose another.',
   'environment.checkingDevice': 'Checking status',
   'environment.chooseDevice': 'Choose a device',
-  'environment.completeRequired': 'Complete the highlighted settings before continuing.',
   'environment.configurationFailed': 'Could not load this Agent’s settings. Try again.',
   'environment.configurationLoading': 'Loading this Agent’s settings…',
   'environment.defaultsHint':
@@ -34,12 +33,20 @@ export default {
   'environment.devicesLoading': 'Checking device status…',
   'environment.directoryLabel': 'Working directory for {{name}}',
   'environment.directoryRequired': 'Choose a working directory on this device.',
+  'environment.homeDirectory': 'Home folder',
+  'environment.inherited.deviceOffline':
+    'This Agent’s device is offline. Reconnect the device, or remove the Agent.',
+  'environment.inherited.deviceRequired':
+    'This coding Agent has no default device. Choose one in its settings, or remove the Agent.',
+  'environment.inherited.deviceUnavailable':
+    'This Agent’s device is unavailable in the current space. Change it in the Agent’s settings, or remove the Agent.',
   'environment.directoryUnavailable':
     'Could not verify the directory. Check the device connection and choose the directory again.',
   'environment.executionRequired':
     'Choose an online device and working directory for every coding Agent.',
   'environment.permissionRequired':
     'You do not have permission to save these members. Check channel and Agent access.',
+  'environment.resolveRequired': 'Resolve the issues shown under the selected Agents first.',
   'environment.saveFailed':
     'Could not save channel members. Your choices are preserved; try again.',
   'environment.signInRequired': 'Sign in again before saving channel members.',
