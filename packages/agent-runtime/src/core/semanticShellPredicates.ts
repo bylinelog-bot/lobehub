@@ -6,8 +6,8 @@ import {
   collectFlagLettersAndNames,
   isUnresolvableCommandWord,
   parameterExpansionOperand,
-  stripGroupingParens,
 } from './shellCommand';
+import { stripGroupingParens } from './shellQuoting';
 
 /**
  * Semantic shell predicates for security rules.
@@ -315,9 +315,7 @@ interface ForwardingRmFunction {
  * `function zap { … }`, `function zap() { … }`) into its name and body words.
  * Returns null when the segment is not a definition.
  */
-const parseFunctionDefinition = (
-  words: string[],
-): { body: string[]; name: string } | null => {
+const parseFunctionDefinition = (words: string[]): { body: string[]; name: string } | null => {
   const [first] = words;
   if (!first) return null;
 

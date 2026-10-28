@@ -7,6 +7,29 @@
  * where the ANSI-C semantics (`$'…'`, NUL truncation) live.
  */
 
+/**
+ * Grouping operators (`(`, `)`) are shell syntax, never part of a word, but
+ * the tokenizer only splits on command separators — so an operand can arrive
+ * as `~)` and a command word as `(command`. Hand-scanned instead of
+ * `replace(/^\(+/, '').replace(/\)+$/, '')`: operands come straight from the
+ * tool call, and a regex over uncontrolled input is a CodeQL
+ * js/polynomial-redos finding; index walks are linear.
+ */
+export const trimGroupingRuns = (word: string, trimTrailing: boolean): string => {
+  let start = 0;
+  let end = word.length;
+  while (start < end && word[start] === '(') start++;
+  while (trimTrailing && end > start && word[end - 1] === ')') end--;
+  return word.slice(start, end);
+};
+
+/** Strip operator runs from both edges (`~)` → `~`, `(rm` → `rm`). */
+export const stripGroupingParens = (word: string): string => trimGroupingRuns(word, true);
+
+/** Strip only a leading opener: function definitions (`f()`) and `case` arms
+ * (`a)`) keep their trailing `)` as syntax. */
+export const stripLeadingGroupingParens = (word: string): string => trimGroupingRuns(word, false);
+
 const ANSI_C_SIMPLE_ESCAPES: Record<string, string> = {
   '"': '"',
   "'": "'",

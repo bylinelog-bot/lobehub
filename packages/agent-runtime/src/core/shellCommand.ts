@@ -16,7 +16,7 @@
  * - Wrappers (sudo / env / nohup) are unwrapped to expose the real command.
  */
 
-import { decodeAnsiCQuoted } from './shellQuoting';
+import { decodeAnsiCQuoted, stripGroupingParens, stripLeadingGroupingParens } from './shellQuoting';
 
 export interface ShellSegment {
   /**
@@ -806,12 +806,8 @@ const tokenizeWords = (raw: string): string[] => {
  * runs before classifying an operand — otherwise a subshell-wrapped home
  * target stays `~)` and every predicate misses the real deletion.
  */
-export const stripGroupingParens = (word: string): string =>
-  word.replace(/^\(+/, '').replace(/\)+$/, '');
-
 /** Leading subshell openers only: the trailing `)` still belongs to compound
  * syntax (`f()`, `case a)`), so it is not stripped here. */
-const stripLeadingGroupingParens = (word: string): string => word.replace(/^\(+/, '');
 
 const isHomePath = (word: string): boolean => {
   const operand = stripGroupingParens(word);

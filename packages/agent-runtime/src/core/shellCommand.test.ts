@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { analyzeShellCommand, stripGroupingParens } from './shellCommand';
+import { analyzeShellCommand } from './shellCommand';
+import { stripGroupingParens } from './shellQuoting';
 
 describe('analyzeShellCommand', () => {
   describe('splitting', () => {
@@ -501,7 +502,7 @@ describe('analyzeShellCommand', () => {
       expect(segs[1].homeTargets).toContain('~');
     });
 
-    it('an escaped apostrophe inside $\'…\' does not end the quote', () => {
+    it("an escaped apostrophe inside $'…' does not end the quote", () => {
       // ANSI-C quoting keeps backslash escapes live, so `\''` is a literal
       // apostrophe followed by the real terminator. Reading the escaped one
       // as the terminator reopened a phantom quote that absorbed the
