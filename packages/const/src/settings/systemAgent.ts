@@ -1,6 +1,8 @@
 import {
   DEFAULT_ASR_MODEL,
   DEFAULT_ASR_PROVIDER,
+  DEFAULT_CHANNEL_ROUTING_MODEL,
+  DEFAULT_CHANNEL_ROUTING_PROVIDER,
   DEFAULT_EMBEDDING_PROVIDER,
   DEFAULT_MINI_PROVIDER,
   DEFAULT_PROVIDER,
@@ -78,7 +80,11 @@ export const DEFAULT_VERIFY_SYSTEM_AGENT_ITEM: SystemAgentItem = {
 export const DEFAULT_SYSTEM_AGENT_CONFIG: UserServiceModelConfig = {
   agentMeta: DEFAULT_SYSTEM_AGENT_ITEM,
   asr: DEFAULT_ASR_SYSTEM_AGENT_ITEM,
-  channelRouting: { enabled: false, model: 'jev-1.14.0', provider: 'typesafe' },
+  channelRouting: {
+    enabled: true,
+    model: DEFAULT_CHANNEL_ROUTING_MODEL,
+    provider: DEFAULT_CHANNEL_ROUTING_PROVIDER,
+  },
   expertise: DEFAULT_SYSTEM_AGENT_ITEM,
   followUpAction: DEFAULT_FOLLOW_UP_ACTION_SYSTEM_AGENT_ITEM,
   generationTopic: DEFAULT_MINI_SYSTEM_AGENT_ITEM,

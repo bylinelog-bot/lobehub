@@ -1,4 +1,6 @@
 export default {
+  'recipients.automatic': 'The decision model will choose which Agents reply',
+
   'people.empty': 'All available workspace members have joined',
   'people.noMatches': 'No matching workspace members',
   'people.searchMore': 'Showing the first 50 members. Search to find more.',

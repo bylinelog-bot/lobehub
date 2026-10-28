@@ -115,6 +115,7 @@
   "receipt.errorUnavailable": "No detailed reason was recorded. Check the Agent’s model and device settings before sending again.",
   "receipt.failedHint": "Mention it again to retry.",
   "recipients.all": "All {{count}} Agents will reply",
+  "recipients.automatic": "The decision model will choose which Agents reply",
   "recipients.many": "{{first}}, {{second}} and {{count}} more will reply",
   "recipients.named": "{{names}} will reply",
   "recipients.noAgents": "No Agent in this channel can reply",

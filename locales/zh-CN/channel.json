@@ -115,6 +115,7 @@
   "receipt.errorUnavailable": "未记录具体原因，请检查 Agent 的模型与设备设置后重新发送。",
   "receipt.failedHint": "再次 @ 它即可重试。",
   "recipients.all": "全部 {{count}} 位 Agent 都会回复",
+  "recipients.automatic": "将由决策模型选择回复的 Agent",
   "recipients.many": "{{first}}、{{second}} 等 {{total}} 位 Agent 会回复",
   "recipients.named": "{{names}} 会回复",
   "recipients.noAgents": "频道里没有可以回复的 Agent",
